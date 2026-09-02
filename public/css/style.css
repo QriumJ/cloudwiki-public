@@ -1339,6 +1339,55 @@ html[data-theme="dark"] .user-dropdown-toggle {
   direction: ltr;
 }
 
+/* ── 우측 목차 진행 레일 (docs·right-toc) ──
+   목차 항목 좌측을 따라 흐르는 SVG path 한 줄. track 은 전체 윤곽, active 는 같은 path 를
+   stroke-dasharray/-dashoffset 으로 잘라 "현재 섹션 구간"만 칠한다(article/toc-sidebar-rail.ts
+   가 좌표와 dash 값을 계산). 항목마다 요소를 만들지 않으므로 스크롤 중 DOM 변경이 없다. */
+.wiki-toc-railed {
+  position: relative;
+}
+
+/* 레일이 들어갈 좌측 여백. toc-sidebar-rail.ts 의 RAIL_GUTTER(10px) + stroke 폭 여유. */
+.wiki-toc-railed .wiki-toc-sidebar-nav {
+  padding-left: 14px;
+}
+
+.wiki-toc-rail-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* 목차 링크의 클릭·호버를 가리지 않는다(레일은 표시 전용). */
+  pointer-events: none;
+  /* stroke 가 좌표 경계에 걸쳐도 잘리지 않도록. */
+  overflow: visible;
+}
+
+/* SVGElement 는 UA 의 `[hidden]` 규칙 대상이 아니므로 명시한다(JS 는 속성만 토글). */
+.wiki-toc-rail-svg[hidden] {
+  display: none;
+}
+
+.wiki-toc-rail-track {
+  stroke: var(--wiki-border);
+}
+
+.wiki-toc-rail-active {
+  stroke: var(--wiki-primary);
+}
+
+/* 첫 좌표가 확정된 뒤(JS 가 data-ready 부여) 전환을 켠다 — 문서 진입 시 선이 위에서부터
+   자라 내려오는 잔상을 막고, 이후 섹션 이동만 부드럽게 이어진다. */
+.wiki-toc-rail-active[data-ready="true"] {
+  transition: stroke-dasharray var(--wiki-dur-moderate) var(--wiki-ease),
+              stroke-dashoffset var(--wiki-dur-moderate) var(--wiki-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wiki-toc-rail-active[data-ready="true"] {
+    transition: none;
+  }
+}
+
 /* 본문 하단으로 옮긴 트렌딩/최근 변경/커스텀 사이드바 — 본문 폭 전체로 확장(단일 컬럼). */
 .wiki-sidebar-bottom-relocated {
   margin: var(--wiki-space-8) 0 var(--wiki-space-4);
@@ -3061,8 +3110,11 @@ html[data-theme="dark"] .push-status-on {
 }
 
 /* ── 우측 스크롤바 목차 레일 (PC 전용) ──
-   본문 헤딩 하나당 점 하나를 문서 내 위치 비율대로 스크롤바 옆에 배치한다. 호버하면 점이
-   좌측으로 펼쳐지며 목차 제목 카드가 되고, 클릭하면 FAB 목차와 동일하게 해당 헤딩으로 스크롤.
+   본문 헤딩 하나당 점 하나를 문서 내 위치 비율대로 스크롤바 옆에 배치한다. 어느 점에 호버하든
+   모든 헤딩 제목이 각자의 점 옆(좌측)으로 함께 펼쳐지고, 클릭하면 FAB 목차와 동일하게 해당 헤딩으로 스크롤.
+   제목은 카드(패널·테두리·그림자) 없이 본문 위에 글자만 얹는다 — 스크롤바 옆의 작은 보조
+   어피던스에 유리 카드를 씌우면 본문을 가리는 덩어리가 갑자기 튀어나오는 인상이 된다.
+   가독성은 배경색 text-shadow 헤일로로 확보한다(아래 .toc-rail-label 참고).
    상/하 inset 은 src/client/article/toc.ts 의 RAIL_TOP_INSET·RAIL_BOTTOM_INSET 과 맞춘다
    (점 좌표를 JS 가 이 범위 안에서 계산하므로 값이 어긋나면 배치가 밀린다).
    컨테이너는 pointer-events:none — 뷰포트 우측 끝을 가로지르므로 본문·스크롤바 조작을 막지 않는다. */
@@ -3075,7 +3127,7 @@ html[data-theme="dark"] .push-status-on {
      RAIL_BOTTOM_INSET 과 같아야 한다. */
   bottom: var(--toc-rail-bottom, 152px);
   width: 0;
-  /* 스크롤 FAB 그룹(--wiki-z-scroll-fab 1040) 바로 위 — 하단 점의 확장 카드가 FAB 에 가려지지
+  /* 스크롤 FAB 그룹(--wiki-z-scroll-fab 1040) 바로 위 — 하단 점의 펼친 제목이 FAB 에 가려지지
      않도록. 접힌 점은 FAB 과 가로로 겹치지 않으므로 FAB 조작을 막지 않고, 모달·오프캔버스·
      플로팅 목차(1049 이상)보다는 아래라 그 레이어들을 뚫지 않는다. */
   z-index: var(--wiki-z-toc-rail);
@@ -3088,100 +3140,28 @@ html[data-theme="dark"] .push-status-on {
   opacity: 1;
 }
 
-/* ── 확장(전체 목차) 패널 ──
-   어느 점에 호버하든 전 항목을 함께 펼친다(점 하나만 펼치면 나머지 목차를 볼 수 없다).
-   확장 배치는 문서 위치 비율이 아니라 연속 목록이며(toc.ts layoutRailPositions), 그 목록을
-   감싸는 유리 패널이 ::after 다. 세로 범위는 JS 가 --toc-rail-panel-top/-h 로 준다.
-   확장 중에는 컨테이너가 패널 폭을 가진다 — 행은 left/right 로 이 폭을 채우므로 폭 0 인
-   접힌 상태 그대로면 행 너비가 음수가 되어 사라진다. */
-.toc-rail.toc-rail-expanded {
-  width: 300px;
-}
-
-/* 호버 유지 영역 — 레일 사각형 전체를 덮는 투명 박스(확장 중에만 히트 테스트에 참여).
-   ① 좁게 잡으면(예: 패널 세로 범위 + 점 열 폭 띠) 목록이 레일 세로 가운데로 모이므로
-      호버한 점과 패널 사이에 어느 쪽에도 안 걸리는 사각지대가 생겨, 패널로 손을 뻗는
-      순간 접힌다. ② 확장 상태에서만 auto 라 접힌 동안에는 본문을 전혀 막지 않고,
-      확장은 점 위에서만 시작되므로 이 영역에 갇히려면 먼저 레일을 가리켜야 한다
-      (그 대가로 확장 중에는 우측 300px 의 클릭·텍스트 선택이 막힌다 — 포인터가 이
-      영역을 벗어나면 바로 접히므로 되돌리는 비용은 마우스 이동 한 번이다).
-   ③ 점은 `top` 중심 기준(translateY(-50%))이라 히트 박스가 레일 박스 위아래로 반높이만큼
-      삐져나온다. 덮개를 딱 레일 박스로 맞추면 그 띠에서 확장 → 행이 목록 위치로 이동 →
-      호버 끊김 → 접힘 → 점이 포인터 아래로 복귀 → 재확장의 진동이 생기므로 같은 반높이만큼
-      넓힌다. 이 여유는 toc.ts railBottomInset() 이 FAB 그룹 위에 함께 확보해 둔다. */
-.toc-rail::before {
-  content: '';
-  position: absolute;
-  inset: calc(var(--toc-rail-hit-h, 22px) / -2) 0;
-  pointer-events: none;
-}
-
-.toc-rail.toc-rail-expanded::before {
-  pointer-events: auto;
-}
-
-/* 유리 패널(시각 전용). 트리 순서상 행보다 뒤라 행 위에 그려지므로 행에 z-index 를 준다.
-   전역 리셋 `* { box-sizing: border-box }` 는 의사요소를 매치하지 않으므로 여기서 직접
-   지정한다 — content-box 로 두면 테두리 2px 만큼 JS 가 계산한 범위를 넘는다. */
-.toc-rail::after {
-  content: '';
-  position: absolute;
-  box-sizing: border-box;
-  left: 0;
-  right: 0;
-  top: var(--toc-rail-panel-top, 0);
-  height: var(--toc-rail-panel-h, 0);
-  border: 1px solid var(--wiki-border);
-  border-radius: var(--wiki-radius-lg);
-  background: var(--wiki-glass-bg);
-  backdrop-filter: var(--wiki-glass-blur);
-  -webkit-backdrop-filter: var(--wiki-glass-blur);
-  box-shadow: var(--wiki-shadow-md);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--wiki-dur-fast) ease;
-}
-
-.toc-rail.toc-rail-expanded::after {
-  opacity: 1;
-}
-
-/* 접힌 상태의 박스는 점보다 넉넉한 히트 영역이고, 실제 점은 .toc-rail-dot::after 가 그린다.
+/* 점의 히트 영역이자 펼친 제목이 자라는 상자다. 실제 점은 .toc-rail-dot::after 가 그린다.
    박스 높이(--toc-rail-hit-h)는 인접 점 간격과 같아야 한다 — 더 크면 박스가 겹쳐
-   뒤 형제가 앞 점의 원 위를 덮고, 가리킨 점과 열리는 카드가 어긋난다.
+   뒤 형제가 앞 점의 원 위를 덮고, 가리킨 점과 펼쳐지는 제목이 어긋난다.
    기본값은 toc.ts 의 RAIL_MIN_GAP 과 같은 22px 이고, 균등 분배 폴백처럼 간격이 더
    좁아질 때 toc.ts 의 layoutRailPositions 가 실제 간격으로 낮춰 준다. */
 .toc-rail-dot {
   --toc-rail-dot-size: 9px;
   position: absolute;
   right: 0;
-  /* 접힌 좌표는 문서 내 비율(--toc-rail-y), 펼친 좌표는 연속 목록(--toc-rail-y-expanded).
-     둘 다 JS 가 커스텀 속성으로 주고 상태 전환은 CSS 가 고른다. */
+  /* 문서 내 위치 비율. JS(layoutRailPositions)가 커스텀 속성으로 준다. */
   top: var(--toc-rail-y, 0px);
   transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
   box-sizing: border-box;
-  width: max-content;
-  min-width: 22px;
-  max-width: 22px;
+  /* 상자는 점 열(22px)에 고정한다 — 제목은 이 상자 밖으로 절대 배치되는 장식이라
+     상자를 넓힐 필요가 없고, 넓히면 제목이 덮은 폭만큼 본문 클릭·텍스트 선택이 막힌다. */
+  width: 22px;
   height: var(--toc-rail-hit-h, 22px);
-  border: 1px solid transparent;
-  border-radius: var(--wiki-radius-lg);
   background: transparent;
   color: var(--wiki-text);
-  white-space: nowrap;
   cursor: pointer;
   user-select: none;
   pointer-events: auto;
-  /* overflow 는 여기가 아니라 .toc-rail-label 이 맡는다 — 히트 박스 높이가 가변(점 지름보다
-     작아질 수 있음)이라 여기서 자르면 ::after 원이 납작하게 깎인다. */
-  transition: max-width var(--wiki-dur-moderate) var(--wiki-ease),
-    height var(--wiki-dur-fast) var(--wiki-ease),
-    background var(--wiki-dur-fast) ease,
-    border-color var(--wiki-dur-fast) ease,
-    box-shadow var(--wiki-dur-fast) ease;
 }
 
 .toc-rail-lv3 {
@@ -3206,12 +3186,15 @@ html[data-theme="dark"] .push-status-on {
   margin-top: calc(var(--toc-rail-dot-draw) / -2);
   border-radius: var(--wiki-radius-full);
   background: color-mix(in srgb, var(--wiki-text) 40%, transparent);
-  transition: background var(--wiki-dur-fast) ease, opacity var(--wiki-dur-fast) ease,
+  transition: background var(--wiki-dur-fast) ease,
     transform var(--wiki-dur-fast) var(--wiki-ease);
 }
 
+/* 호버한 점은 사라지지 않는다 — 제목이 그 점에서 자라 나오는 것으로 읽혀야 하므로
+   점을 앵커로 남기고 브랜드색으로만 강조한다. */
 .toc-rail-dot:hover::after {
-  opacity: 0;
+  background: var(--wiki-primary);
+  transform: scale(1.2);
 }
 
 /* 스크롤스파이 활성 헤딩 — 점을 브랜드색으로 키워 현재 위치를 표시. */
@@ -3220,31 +3203,49 @@ html[data-theme="dark"] .push-status-on {
   transform: scale(1.35);
 }
 
-.toc-rail-dot:hover {
-  max-width: 300px;
-  /* 카드는 점 간격과 무관하게 읽을 수 있는 높이로 펼친다(형제 위로 올라오도록 z-index 부여). */
-  height: 24px;
-  z-index: 1;
-  background: var(--wiki-glass-bg);
-  backdrop-filter: var(--wiki-glass-blur);
-  -webkit-backdrop-filter: var(--wiki-glass-blur);
-  border-color: var(--wiki-border);
-  box-shadow: var(--wiki-shadow-md);
-}
-
+/* 카드 없이 본문 위에 얹히는 글자다. 배경색 헤일로(text-shadow)로 본문 글자·이미지 위에서도
+   읽히게 하되 상자는 그리지 않는다 — 4방향으로 깔아야 어느 방향의 본문 획과 겹쳐도 끊긴다.
+   점 열(22px) 밖으로 절대 배치되므로 히트 테스트에 참여하지 않는다(pointer-events:none) —
+   제목이 펼쳐져도 그 아래 본문의 클릭·텍스트 선택은 그대로다.
+   right 는 점 원(right:6px, 최대 지름 9px)을 피할 만큼 띄운다. */
 .toc-rail-label {
-  min-width: 0;
-  padding: 0 10px;
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
   font-size: var(--wiki-fs-base);
   line-height: 1.2;
+  font-weight: 500;
+  text-shadow:
+    0 0 6px var(--wiki-bg),
+    1px 0 2px var(--wiki-bg),
+    -1px 0 2px var(--wiki-bg),
+    0 1px 2px var(--wiki-bg),
+    0 -1px 2px var(--wiki-bg);
+  pointer-events: none;
   opacity: 0;
   transition: opacity var(--wiki-dur-fast) ease;
 }
 
+/* 어느 점에 호버하든 모든 제목이 함께 펼쳐진다 — 점 하나만 펼치면 나머지 목차를 볼 수 없다.
+   점은 자리를 옮기지 않으므로(라벨은 각자의 점 옆에 그대로 뜬다) 이전 패널 방식과 달리
+   호버가 끊겼다 붙는 진동도, 그걸 막기 위한 투명 덮개도 필요 없다.
+   `.toc-rail-labels` 는 JS(layoutRailPositions)가 점 간격이 한 줄을 담을 만큼 넉넉할 때만
+   붙인다 — 그보다 촘촘하면 제목끼리 세로로 겹쳐 읽을 수 없으므로 가리킨 점 하나만 펼친다. */
+.toc-rail-labels:has(.toc-rail-dot:hover) .toc-rail-label {
+  opacity: 1;
+}
+
+/* 가리킨 점·현재 위치(스크롤스파이)는 전체가 펼쳐진 상태에서도 구분되어야 한다. */
 .toc-rail-dot:hover .toc-rail-label {
   opacity: 1;
+  color: var(--wiki-primary);
 }
 
 .toc-rail-dot.toc-active .toc-rail-label {
@@ -3255,65 +3256,6 @@ html[data-theme="dark"] .push-status-on {
 .toc-rail-num {
   color: var(--wiki-text-muted);
   font-variant-numeric: tabular-nums;
-}
-
-/* ── 확장 상태의 행 ──
-   패널(.toc-rail::after) 안에서 폭을 가득 채우는 좌측 정렬 목차 행이 된다. 카드 chrome 은 패널이
-   맡으므로 행 자체는 투명하고, 가리킨 행만 옅은 브랜드색으로 표시한다. 행 높이는 JS 가 준
-   --toc-rail-row-h 에서 2px 을 빼 행 사이에 실낱 간격을 남긴다.
-   .toc-rail-expandable 이 없으면(초밀집 문서라 목록이 레일에 안 들어감) 이 상태로 들어가지
-   않고 기존의 "가리킨 점만 카드로" 동작이 유지된다. */
-.toc-rail.toc-rail-expanded .toc-rail-dot {
-  top: var(--toc-rail-y-expanded, var(--toc-rail-y, 0px));
-  left: 6px;
-  right: 6px;
-  width: auto;
-  min-width: 0;
-  max-width: none;
-  height: calc(var(--toc-rail-row-h, 24px) - 2px);
-  justify-content: flex-start;
-  border-color: transparent;
-  border-radius: var(--wiki-radius-md);
-  background: transparent;
-  box-shadow: none;
-  /* 유리 패널(::after)보다 위에 와야 행이 가려지지 않는다. */
-  z-index: 1;
-  /* 비율 좌표 → 목록 좌표 이동만 애니메이션한다. 기본 상태에 두면 접힌 좌표 갱신
-     (refresh() 의 다단 재계산·본문 ResizeObserver)마다 점이 미끄러진다. */
-  transition: top var(--wiki-dur-moderate) var(--wiki-ease),
-    background var(--wiki-dur-fast) ease;
-}
-
-.toc-rail.toc-rail-expanded .toc-rail-dot::after {
-  opacity: 0;
-}
-
-.toc-rail.toc-rail-expanded .toc-rail-label {
-  opacity: 1;
-}
-
-/* 확장 상태에서는 번호만으로 계층을 읽기 어려우므로 레벨만큼 들여쓴다. */
-.toc-rail.toc-rail-expanded .toc-rail-lv2 .toc-rail-label {
-  padding-left: 22px;
-}
-
-.toc-rail.toc-rail-expanded .toc-rail-lv3 .toc-rail-label {
-  padding-left: 34px;
-}
-
-.toc-rail.toc-rail-expanded .toc-rail-lv4 .toc-rail-label {
-  padding-left: 46px;
-}
-
-.toc-rail.toc-rail-expanded .toc-rail-dot:hover {
-  max-width: none;
-  height: calc(var(--toc-rail-row-h, 24px) - 2px);
-  background: color-mix(in srgb, var(--wiki-primary) 12%, transparent);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-color: transparent;
-  box-shadow: none;
-  z-index: 2;
 }
 
 /* Raw 보기에는 본문 헤딩이 없다(JS 도 레일을 비우지만 전환 순간 잔상을 막는다). */
@@ -3353,8 +3295,6 @@ body:not([data-layout-mode="default"]):not([data-layout-mode="wide"]) .toc-rail 
 @media (prefers-reduced-motion: reduce) {
 
   .toc-rail,
-  .toc-rail::after,
-  .toc-rail.toc-rail-expanded .toc-rail-dot,
   .toc-rail-dot,
   .toc-rail-dot::after,
   .toc-rail-label {

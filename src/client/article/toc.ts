@@ -8,6 +8,8 @@
 // 토글 시 재렌더만 셸별로 다르므로 onReadingModeToggled 콜백으로 위임한다.
 // 동작은 과거 index.ts 의 목차/읽기/Raw 모드 블록과 동일하다.
 
+import { createTocSidebarRail } from './toc-sidebar-rail';
+
 export interface TocControllerOptions {
   /** 읽기 모드 토글 직후 호출(프레젠테이션 문서 재렌더 등 셸별 후처리). */
   onReadingModeToggled?: (active: boolean) => void;
@@ -16,6 +18,24 @@ export interface TocControllerOptions {
 export function createTocController(opts: TocControllerOptions = {}) {
   let spyLastId: string | null = null;
   let spyAttached = false;
+  // 우측 목차 사이드바(docs·right-toc)의 진행 레일. 마크업이 없는 셸에서는 모든 호출이 no-op.
+  const sidebarRail = createTocSidebarRail('wikiTocSidebarRightNav', 'wikiTocSidebarRightRail');
+  // 목차 링크 클릭으로 고정된 헤딩 id. 스무스 스크롤이 진행되는 동안 스크롤스파이가 중간
+  // 섹션들을 훑고 지나가며 활성 항목을 깜빡이게 하므로, 클릭 대상에 고정해 두고 사용자가
+  // 직접 스크롤 입력(휠·터치·키보드)을 주는 순간 해제한다.
+  let pinnedId: string | null = null;
+  // 고정 대상이 한 번이라도 뷰포트에 들어온 적이 있는지. 스무스 스크롤은 비동기라 클릭
+  // 직후에는 대상이 아직 화면 밖이다 — "화면 밖이면 해제" 규칙을 도착 전에 적용하면 정작
+  // 멀리 있는 섹션을 클릭한 경우(고정이 가장 필요한 경우)에 곧바로 풀린다.
+  let pinnedSeen = false;
+  // 도착을 기다리는 시간 상한(ms). 스크롤이 끝내 도달하지 못하는 경우(중간에 레이아웃이
+  // 바뀌어 대상이 사라짐 등) 고정이 영구히 남지 않도록 한다.
+  const PIN_ARRIVAL_TIMEOUT = 3000;
+  let pinnedAt = 0;
+  // 고정을 건 문서의 경로. 헤딩 id 는 위치 기반(`s-1.2`)이라 다른 문서에도 같은 id 가 존재할 수
+  // 있어, SPA 로 문서를 옮긴 뒤에도 고정이 남으면 새 문서의 엉뚱한 항목이 계속 활성이 된다
+  // (마우스만 쓰면 releasePin 이 발화하지 않는다). 목차 클릭은 해시만 바꾸므로 경로는 그대로다.
+  let pinnedPath = '';
 
   // ── 우측 스크롤바 목차 레일 상수 ──
   // 레일은 뷰포트 우측 끝(스크롤바 옆)에 고정되며, 상단/하단 여백으로 헤더·스크롤 FAB 그룹을 피한다.
@@ -29,23 +49,21 @@ export function createTocController(opts: TocControllerOptions = {}) {
   // CSS 와 어긋나는 순간 조용히 틀어지므로 rect 를 읽는다. 아래 값은 실측 전(첫 프레임)
   // 폴백이며 style.css 의 `bottom` 기본값과 같아야 한다.
   const RAIL_BOTTOM_INSET = 152; // px
-  // FAB 그룹 위로 남길 여유. 확장 중 호버 덮개가 점의 히트 박스만큼(RAIL_MIN_GAP/2) 레일
-  // 아래로 삐져나오므로 그만큼 + 여유를 함께 확보해야 덮개가 최상단 FAB 의 클릭을 삼키지 않는다.
+  // FAB 그룹 위로 남길 여유. 점은 좌표 중심 정렬(translateY(-50%))이라 히트 박스가 레일
+  // 아래로 반높이(RAIL_MIN_GAP/2)만큼 삐져나오므로, 그만큼 + 여유를 함께 확보해야 최하단
+  // 점의 히트 박스가 최상단 FAB 의 클릭을 삼키지 않는다.
   const RAIL_FAB_CLEARANCE = 4;  // px
   // 점의 히트 박스 높이(style.css `--toc-rail-hit-h` 기본값)와 같은 값이어야 인접 박스가 겹치지
-  // 않는다 — 겹치면 뒤 형제가 히트 테스트를 가져가 "가리킨 점"과 "열리는 카드"가 어긋난다.
+  // 않는다 — 겹치면 뒤 형제가 히트 테스트를 가져가 "가리킨 점"과 "펼쳐지는 제목"이 어긋난다.
   const RAIL_MIN_GAP = 22;       // px
   // 점이 이보다 촘촘해지면(헤딩 수백 개) 히트 박스를 줄여도 겹침을 피할 수 없어 "가리킨 점"과
-  // "열리는 카드"가 어긋난다. 그 밀도에서는 어피던스 자체가 무의미하므로 레일을 띄우지 않는다.
+  // "펼쳐지는 제목"이 어긋난다. 그 밀도에서는 어피던스 자체가 무의미하므로 레일을 띄우지 않는다.
   const RAIL_MIN_DOT_GAP = 4;    // px
+  // 전체 제목 펼침(어느 점에 호버하든 모든 제목 노출)을 켜는 최소 점 간격. 라벨 한 줄 높이
+  // (fs-base × line-height 1.2 ≈ 18px)보다 촘촘하면 제목끼리 세로로 겹쳐 읽을 수 없으므로,
+  // 그 밀도에서는 가리킨 점 하나만 펼친다(style.css `.toc-rail-labels` 유무로 갈린다).
+  const RAIL_LABEL_MIN_GAP = 18; // px
   const RAIL_MIN_HEIGHT = 240;   // px — 이보다 낮은 뷰포트에서는 레일을 띄우지 않는다
-  // ── 확장(전체 목차) 상태 상수 ──
-  // 점 하나에 호버해도 전 항목을 함께 펼친다. 확장 배치는 문서 위치 비율이 아니라 연속 목록이며
-  // 행 높이는 RAIL_ROW_H 를, 레일 높이에 다 들어가지 않으면 RAIL_ROW_MIN 까지 줄인다.
-  // 그래도 못 담는 초밀집 문서는 전체 확장을 포기하고 가리킨 점만 카드로 펼친다(기존 동작).
-  const RAIL_ROW_H = 24;         // px
-  const RAIL_ROW_MIN = 18;       // px
-  const RAIL_PANEL_PAD = 6;      // px — 패널이 행 위아래로 두르는 여백(style.css ::after 가 소비)
   let railRebuildTimer: number | null = null;
   let railLayoutTimer: number | null = null;
   // 마지막으로 만든 점 구성의 시그니처(헤딩 id·레벨·라벨). 같으면 재구축 대신 좌표만 갱신한다 —
@@ -66,6 +84,7 @@ export function createTocController(opts: TocControllerOptions = {}) {
     if (!realHeadings.length) {
       sidebar.classList.add('d-none');
       nav.innerHTML = '';
+      if (navId === 'wikiTocSidebarRightNav') sidebarRail.build();
       return false;
     }
     let html = (contentEl && typeof window.buildTocOlHtml === 'function')
@@ -78,6 +97,7 @@ export function createTocController(opts: TocControllerOptions = {}) {
     if (!html) {
       sidebar.classList.add('d-none');
       nav.innerHTML = '';
+      if (navId === 'wikiTocSidebarRightNav') sidebarRail.build();
       return false;
     }
     nav.innerHTML = html;
@@ -86,6 +106,10 @@ export function createTocController(opts: TocControllerOptions = {}) {
     // buildTocOlHtml 은 숨김 분기 헤딩도 포함해 생성하고, 이 재구축은
     // renderWikiContent 내부의 _initTemporal 동기화보다 늦게 실행되기 때문.
     window._syncTemporalDerivedVisibility?.(document);
+    // 진행 레일은 목차 링크의 실제 좌표에서 경로를 뽑으므로 DOM 이 확정된 지금 다시 그린다
+    // (temporal 필터가 항목을 숨긴 뒤여야 숨은 항목이 경로에 끼지 않는다).
+    // 레일은 우측 사이드바에만 있으므로 좌측(left-toc) 호출에서는 건드리지 않는다.
+    if (navId === 'wikiTocSidebarRightNav') sidebarRail.build();
     return true;
   }
 
@@ -115,8 +139,8 @@ export function createTocController(opts: TocControllerOptions = {}) {
 
   // ── 우측 스크롤바 목차 레일 (PC 전용) ──
   // 본문 헤딩 하나당 점 하나를 문서 내 위치 비율대로 뷰포트 우측 끝에 배치한다(미니맵 매핑).
-  // 목차 사이드바가 없는 레이아웃(default·wide)에서만 띄운다. 어느 점에든 호버하면 전체 목차가
-  // 패널로 펼쳐지고, 클릭하면 FAB 목차와 동일한 경로
+  // 목차 사이드바가 없는 레이아웃(default·wide)에서만 띄운다. 어느 점에 호버하든 모든 헤딩
+  // 제목이 카드 없이 각자의 점 옆(좌측)으로 함께 펼쳐지고, 클릭하면 FAB 목차와 동일한 경로
   // (_resolveAnchorTarget → _scrollToElementWithAncestors)로 해당 헤딩까지 스크롤한다.
   // 목차 패널·사이드바와 같은 목차를 포인터 전용으로 중복 제공하므로 키보드/스크린리더 경로는
   // 기존 목차가 담당한다(컨테이너 aria-hidden, 점은 포커스 대상이 아닌 span).
@@ -158,7 +182,7 @@ export function createTocController(opts: TocControllerOptions = {}) {
    *  `key` 는 재구축 판정용이다. 헤딩 안에 라이브 `{timer:}` 가 있으면 텍스트가 초마다 바뀌어
    *  매초 전면 재구축이 되므로, 그 헤딩만 본문 텍스트를 빼고 id·레벨·번호로 판정한다.
    *  헤딩 id 는 텍스트가 아니라 위치 기반(`s-1.2`)이므로 트레이드오프가 있다 — 아웃라인이
-   *  그대로인 채 타이머 헤딩의 제목만 바뀌면 카드 라벨 갱신을 놓친다(초당 재구축을 피하는 대가). */
+   *  그대로인 채 타이머 헤딩의 제목만 바뀌면 라벨 갱신을 놓친다(초당 재구축을 피하는 대가). */
   function railLabelOf(h: HTMLElement): { num: string; text: string; key: string } {
     const numSpan = h.querySelector('.wiki-heading-num');
     let text = '';
@@ -183,15 +207,9 @@ export function createTocController(opts: TocControllerOptions = {}) {
     return Math.max(RAIL_BOTTOM_INSET, Math.ceil(fabTop) + RAIL_MIN_GAP / 2 + RAIL_FAB_CLEARANCE);
   }
 
-  /** 확장(전체 목차) 상태를 끈다 — 레일이 사라지거나 다시 만들어질 때 잔상이 남지 않게. */
-  function collapseRail(rail?: HTMLElement | null) {
-    const el = rail || document.getElementById('tocScrollRail');
-    if (el) el.classList.remove('toc-rail-expanded');
-  }
-
-  /** 이상적 위치(문서 내 비율)를 최소 간격 제약에 맞게 보정해 레일 좌표를 확정한다.
-   *  접힌 좌표(--toc-rail-y)와 확장 좌표(--toc-rail-y-expanded)를 함께 계산해 CSS 가
-   *  상태에 따라 고르게 한다(둘 다 인라인 값이면 상태 전환을 JS 가 매번 다시 써야 한다). */
+  /** 이상적 위치(문서 내 비율)를 최소 간격 제약에 맞게 보정해 레일 좌표(--toc-rail-y)를
+   *  확정한다. 점은 호버해도 자리를 옮기지 않고 제목만 옆으로 펼쳐지므로 좌표는 이 하나뿐이다.
+   *  전체 펼침 가능 여부(`.toc-rail-labels`)도 여기서 실제 간격을 보고 정한다. */
   function layoutRailPositions() {
     const rail = document.getElementById('tocScrollRail');
     if (!rail) return;
@@ -203,11 +221,10 @@ export function createTocController(opts: TocControllerOptions = {}) {
     // 레일을 띄우지 않는 높이에서는 좌표가 음수가 되어 점이 헤더 쪽으로 튄다. syncRail 이
     // 리사이즈 디바운스 후 레일을 비우지만, 그 사이 잔상이 보이지 않도록 여기서 감춘다 —
     // 좌표를 다시 찍지 않고 그냥 두면 옛 railHeight 로 찍힌 아래쪽 점이 그대로 남아,
-    // FAB 이 늘어난 만큼(읽기 모드 진입 등) 그 위에 겹친 채 호버 카드까지 연다.
+    // FAB 이 늘어난 만큼(읽기 모드 진입 등) 그 위에 겹친 채 호버 제목까지 펼친다.
     if (railHeight < RAIL_MIN_HEIGHT) {
       rail.hidden = true;
-      rail.classList.remove('toc-rail-expandable');
-      collapseRail(rail);
+      rail.classList.remove('toc-rail-labels');
       return;
     }
     rail.style.setProperty('--toc-rail-bottom', `${bottomInset}px`);
@@ -240,7 +257,7 @@ export function createTocController(opts: TocControllerOptions = {}) {
       }
     }
 
-    // 실제 간격보다 히트 박스가 크면 뒤 형제가 앞 점의 원 위를 덮어 "가리킨 점"과 "열리는 카드"가
+    // 실제 간격보다 히트 박스가 크면 뒤 형제가 앞 점의 원 위를 덮어 "가리킨 점"과 "펼쳐지는 제목"이
     // 어긋난다(균등 분배 폴백에서 간격이 RAIL_MIN_GAP 미만이 될 수 있다). 최소 간격에 맞춰 줄이되,
     // 간격은 실제로 찍히는 정수 좌표 기준으로 재야 반올림분(최대 1px)만큼 다시 겹치지 않는다.
     const tops = ys.map((y) => Math.round(y));
@@ -248,40 +265,14 @@ export function createTocController(opts: TocControllerOptions = {}) {
     for (let i = 1; i < tops.length; i++) minGap = Math.min(minGap, tops[i] - tops[i - 1]);
     if (minGap < RAIL_MIN_DOT_GAP) {
       rail.hidden = true;
-      rail.classList.remove('toc-rail-expandable');
-      collapseRail(rail);
+      rail.classList.remove('toc-rail-labels');
       return;
     }
     rail.hidden = false;
     dots.forEach((dot, i) => { dot.style.setProperty('--toc-rail-y', `${tops[i]}px`); });
     rail.style.setProperty('--toc-rail-hit-h', `${Math.floor(minGap)}px`);
-
-    // ── 확장 좌표: 문서 위치 비율과 무관한 연속 목록(레일 세로 가운데 정렬) ──
-    // 비율 배치를 그대로 두고 라벨만 펼치면 밀집 구간에서 카드가 서로 겹쳐 읽을 수 없고,
-    // 행 사이에 빈틈이 생겨 포인터가 그 틈에 들어갈 때마다 접힘↔펼침이 반복된다.
-    // 행 높이를 줄여도 다 담기지 않으면(초밀집 문서) 전체 확장을 포기한다 — 그 경우 CSS 가
-    // 가리킨 점만 카드로 펼치는 기존 동작으로 남는다.
-    let rowH = RAIL_ROW_H;
-    if (dots.length * rowH > railHeight) rowH = Math.floor(railHeight / dots.length);
-    if (rowH < RAIL_ROW_MIN) {
-      rail.classList.remove('toc-rail-expandable');
-      collapseRail(rail);
-      return;
-    }
-    const listHeight = rowH * dots.length;
-    const listTop = (railHeight - listHeight) / 2;
-    dots.forEach((dot, i) => {
-      dot.style.setProperty('--toc-rail-y-expanded', `${Math.round(listTop + rowH * i + rowH / 2)}px`);
-    });
-    rail.style.setProperty('--toc-rail-row-h', `${rowH}px`);
-    // 패널 여백은 레일 범위 안으로 가둔다 — 목록이 레일을 거의 꽉 채우면(행 높이를 줄인
-    // 밀집 문서) 여백만큼 넘쳐 헤더 아래/스크롤 FAB 위를 덮는다(레일 z-index 가 그 둘보다
-    // 위라 실제로 가려진다). 상/하 inset 을 맞춰 둔 의미가 사라지지 않게 clamp 한다.
-    const panelTop = Math.max(0, Math.round(listTop) - RAIL_PANEL_PAD);
-    const panelBottom = Math.min(railHeight, Math.round(listTop) + listHeight + RAIL_PANEL_PAD);
-    rail.style.setProperty('--toc-rail-panel-top', `${panelTop}px`);
-    rail.style.setProperty('--toc-rail-panel-h', `${Math.max(0, panelBottom - panelTop)}px`);
-    rail.classList.add('toc-rail-expandable');
+    // 점 간격이 한 줄을 담을 만큼 넉넉할 때만 전체 펼침을 허용한다(그렇지 않으면 제목이 겹친다).
+    rail.classList.toggle('toc-rail-labels', minGap >= RAIL_LABEL_MIN_GAP);
   }
 
   /** 좌표 재계산 디바운스(이미지 로드 등으로 본문 높이가 계속 변할 때 과다 계산 방지). */
@@ -301,8 +292,7 @@ export function createTocController(opts: TocControllerOptions = {}) {
     if (headings.length < 2) {
       // 헤딩이 하나뿐이면 이동 대상이 사실상 없으므로 레일을 띄우지 않는다.
       rail.innerHTML = '';
-      rail.classList.remove('visible', 'toc-rail-expandable');
-      collapseRail(rail);
+      rail.classList.remove('visible', 'toc-rail-labels');
       rail.hidden = false;
       railSignature = '';
       return;
@@ -316,7 +306,7 @@ export function createTocController(opts: TocControllerOptions = {}) {
     // 점이 실제 헤딩과 어긋난 채 유지될 수 있다.
     const signature = entries.map((e) => `${e.level}\x1f${e.id}\x1f${e.num}\x1f${e.key}`).join('\x1e');
     if (signature === railSignature && rail.querySelector('.toc-rail-dot')) {
-      // 헤딩 구성이 그대로면 DOM 을 갈아엎지 않는다 — 호버 중인 카드가 파괴되지 않고,
+      // 헤딩 구성이 그대로면 DOM 을 갈아엎지 않는다 — 호버 중인 제목이 파괴되지 않고,
       // {timer:} 같은 초 단위 본문 갱신에서 매번 전체 재생성이 일어나지 않는다.
       layoutRailPositions();
       return;
@@ -343,10 +333,7 @@ export function createTocController(opts: TocControllerOptions = {}) {
       dot.appendChild(label);
       frag.appendChild(dot);
     });
-    // 재구축된 점은 확장 좌표가 아직 없으므로(바로 아래 layoutRailPositions 가 채운다)
-    // 확장 상태를 물려받으면 한 프레임 동안 모든 행이 레일 상단에 겹쳐 보인다.
     rail.replaceChildren(frag);
-    collapseRail(rail);
     rail.classList.add('visible');
     railSignature = signature;
     layoutRailPositions();
@@ -380,45 +367,113 @@ export function createTocController(opts: TocControllerOptions = {}) {
     if (!dot) return;
     const id = (dot as HTMLElement).dataset.tocRailId;
     if (!id) return;
-    // 이동하는 순간 펼쳐진 목차 패널은 역할이 끝났으므로 접는다(포인터를 다시 움직이면
-    // 평소처럼 다시 펼쳐진다 — 호버 어피던스 자체는 그대로다).
-    collapseRail(dot.closest('.toc-rail') as HTMLElement | null);
     const target = typeof window._resolveAnchorTarget === 'function'
       ? window._resolveAnchorTarget(id)
       : document.getElementById(id);
     if (!target) return;
     history.pushState(null, '', `#${encodeURIComponent(id)}`);
+    // 목차 링크 클릭과 동일하게 도착 섹션을 고정한다(스무스 스크롤 중 활성 깜빡임 방지).
+    setPin(id);
     if (typeof window._scrollToElementWithAncestors === 'function') {
       window._scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
     } else {
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+    // 목차 링크 클릭과 동일하게 도착 항목을 즉시 칠한다(스무스 스크롤을 기다리지 않는다).
+    spyLastId = null;
+    updateActive();
   }
 
   // ── 스크롤 스파이 ──
+
+  /** 활성 판정 기준선(뷰포트 상단에서 이만큼 아래를 지난 마지막 헤딩이 현재 섹션).
+   *  뷰포트 높이의 25% 를 쓰되 [120, 180]px 로 묶는다 — 고정 상수는 낮은 창에서 기준선이
+   *  화면 중앙까지 내려가고 큰 창에서는 헤더에 붙어, 같은 문서인데 창 크기에 따라 활성 항목이
+   *  달라 보인다. 하한은 sticky 헤더 높이를, 상한은 "다음 섹션이 화면 절반을 채우기 전에는
+   *  넘어가지 않는다"는 감각을 지킨다. */
+  function spyOffset(): number {
+    return Math.min(180, Math.max(120, Math.round(window.innerHeight * 0.25)));
+  }
+
+  /** 스크롤이 문서 최하단에 닿았는지(오차 2px). 마지막 섹션이 짧으면 기준선을 끝내 넘지
+   *  못해 활성이 되지 못하므로, 이때는 마지막 헤딩을 강제로 활성으로 본다.
+   *  스크롤이 아예 없는(뷰포트보다 짧은) 문서는 제외한다 — scrollHeight 는 최소 뷰포트
+   *  높이라 그런 문서에서는 이 조건이 처음부터 참이 되어 항상 마지막 항목이 활성이 된다. */
+  function atDocumentBottom(): boolean {
+    const doc = document.documentElement;
+    if (doc.scrollHeight <= window.innerHeight + 4) return false;
+    return window.scrollY + window.innerHeight >= doc.scrollHeight - 2;
+  }
+
+  /** 고정 상태를 비운다(활성 재계산은 호출측이 필요할 때 한다). */
+  function clearPin() {
+    pinnedId = null;
+    pinnedSeen = false;
+    pinnedAt = 0;
+    pinnedPath = '';
+  }
+
+  /** 목차 클릭으로 건 고정을 계속 유지할지. 도착 전(아직 화면 밖)에는 시간 상한까지 기다리고,
+   *  한 번 화면에 들어온 뒤로는 대상이 뷰포트를 벗어나는 순간 놓아 준다. */
+  function pinnedStillActive(): boolean {
+    if (!pinnedId) return false;
+    if (location.pathname !== pinnedPath) return false;
+    const el = document.getElementById(pinnedId);
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const rendered = !!(rect.height || rect.width);
+    const visible = rendered && rect.bottom > 0 && rect.top < window.innerHeight;
+    if (visible) { pinnedSeen = true; return true; }
+    // 아직 도착 전: 스무스 스크롤이 진행 중일 수 있으므로 상한까지 유지한다.
+    if (!pinnedSeen) return Date.now() - pinnedAt < PIN_ARRIVAL_TIMEOUT;
+    return false;
+  }
+
+  /** 목차 클릭 대상을 고정한다(클릭 경로 공용). */
+  function setPin(id: string) {
+    pinnedId = id;
+    pinnedSeen = false;
+    pinnedAt = Date.now();
+    pinnedPath = location.pathname;
+  }
+
+  /** 목차 클릭 고정 해제 — 사용자가 직접 스크롤 입력을 준 순간 자동 스파이로 돌아간다. */
+  function releasePin() {
+    if (pinnedId === null) return;
+    clearPin();
+    spyLastId = null;
+    updateActive();
+  }
+
   function findCurrentHeadingId(): string | null {
     const articleContent = document.getElementById('articleContent');
     if (!articleContent) return null;
-    const headings = articleContent.querySelectorAll('h1, h2, h3, h4');
+    // 렌더되지 않는 헤딩(접힌 :::fold·비활성 탭 pane·temporal [hidden] 분기)은 제외한다.
+    // 그런 헤딩은 rect 가 전부 0 이라 "기준선을 이미 지났다"로 판정되므로, 문서 뒤쪽에 하나만
+    // 있어도 스크롤 위치와 무관하게 활성을 가져간다(railHeadings 와 같은 가시성 필터).
+    const headings = (Array.from(articleContent.querySelectorAll('h1, h2, h3, h4')) as HTMLElement[])
+      .filter((h) => !!h.id && !!(h.offsetWidth || h.offsetHeight || h.getClientRects().length));
     if (!headings.length) return null;
 
-    const offset = 120;
+    // 클릭으로 고정된 섹션이 아직 화면에 있으면 스크롤 좌표와 무관하게 그대로 유지한다.
+    if (pinnedId) {
+      if (pinnedStillActive()) return pinnedId;
+      clearPin();
+    }
+
+    // 최하단에서는 기준선을 못 넘은 마지막 섹션도 활성으로 본다(짧은 꼬리 섹션 보정).
+    if (atDocumentBottom()) return headings[headings.length - 1].id;
+
+    const offset = spyOffset();
     let currentId: string | null = null;
     for (const h of headings) {
-      if (!h.id) continue;
-      const rect = h.getBoundingClientRect();
-      if (rect.top - offset <= 0) {
+      if (h.getBoundingClientRect().top - offset <= 0) {
         currentId = h.id;
       } else {
         break;
       }
     }
-    if (!currentId) {
-      for (const h of headings) {
-        if (h.id) { currentId = h.id; break; }
-      }
-    }
-    return currentId;
+    return currentId || headings[0].id;
   }
 
   function updateActive() {
@@ -432,14 +487,24 @@ export function createTocController(opts: TocControllerOptions = {}) {
     ['tocNav', 'tocFloatingNav', 'wikiTocSidebarNav', 'wikiTocSidebarRightNav'].forEach((navId) => {
       const nav = document.getElementById(navId);
       if (!nav) return;
-      nav.querySelectorAll('a.toc-active').forEach((a) => a.classList.remove('toc-active'));
+      nav.querySelectorAll('a.toc-active').forEach((a) => {
+        a.classList.remove('toc-active');
+        // 시각 강조(.toc-active)와 짝을 이루는 보조기술 신호. 목차는 링크 목록이므로
+        // aria-current="true"(현재 항목)로 표시한다.
+        a.removeAttribute('aria-current');
+      });
       nav.querySelectorAll('a').forEach((a) => {
         const href = a.getAttribute('href') || '';
-        if (href.slice(1) === currentId) a.classList.add('toc-active');
+        if (href.slice(1) === currentId) {
+          a.classList.add('toc-active');
+          a.setAttribute('aria-current', 'true');
+        }
       });
     });
 
     updateRailActive(currentId);
+    // 우측 사이드바 진행 레일: 활성 항목 구간으로 칠을 옮긴다(경로 재계산 없음).
+    sidebarRail.sync();
 
     const floatingNav = document.getElementById('tocFloatingNav');
     const panel = document.getElementById('tocFloatingPanel');
@@ -469,11 +534,15 @@ export function createTocController(opts: TocControllerOptions = {}) {
         // [hidden] 이라 rect 가 0 이 된다. 이 경우 top(0) < boxRect.top 가 참이 되어 사이드바를
         // 잘못 위로 스냅하므로, 렌더되지 않는(rect 0) 링크는 보정 대상에서 제외한다
         // (FAB 의 scrollIntoView 가 비렌더 대상에서 no-op 인 것과 동일한 방어).
+        // 가장자리에 딱 붙은 항목은 "보이긴 하지만 잘린 것처럼" 읽히므로 여백(EDGE)을 두고
+        // 그 안쪽까지 끌어온다. 레일의 칠해진 구간도 함께 보여야 하므로 항목 높이보다
+        // 조금 넉넉한 값을 쓴다.
+        const EDGE = 12;
         if (linkRect.width || linkRect.height) {
-          if (linkRect.top < boxRect.top) {
-            rightSidebar.scrollTop -= boxRect.top - linkRect.top;
-          } else if (linkRect.bottom > boxRect.bottom) {
-            rightSidebar.scrollTop += linkRect.bottom - boxRect.bottom;
+          if (linkRect.top < boxRect.top + EDGE) {
+            rightSidebar.scrollTop -= (boxRect.top + EDGE) - linkRect.top;
+          } else if (linkRect.bottom > boxRect.bottom - EDGE) {
+            rightSidebar.scrollTop += linkRect.bottom - (boxRect.bottom - EDGE);
           }
         }
       }
@@ -486,10 +555,16 @@ export function createTocController(opts: TocControllerOptions = {}) {
     updateActive();
     // 섹션 접기/펼치기 등으로 문서 높이가 바뀌면 레일 점 좌표도 다시 계산해야 한다.
     layoutRailPositions();
+    // 우측 사이드바 목차도 temporal 토글로 항목이 드나들 수 있으므로 경로를 다시 그린다
+    // (크기가 그대로면 ResizeObserver 가 깨지 않는다).
+    scheduleSidebarRailBuild();
     [90, 200, 340, 450].forEach((d) => setTimeout(() => {
       spyLastId = null;
       updateActive();
       layoutRailPositions();
+      // 높이는 그대로인 채 링크 x 좌표만 바뀌는 경우(들여쓰기 재계산)는 ResizeObserver 가
+      // 잡지 못하므로 같은 보정 시점에 레일도 다시 그린다.
+      scheduleSidebarRailBuild();
     }, d));
   }
 
@@ -506,21 +581,43 @@ export function createTocController(opts: TocControllerOptions = {}) {
     if (!target) return;
     e.preventDefault();
     history.pushState(null, '', hash);
+    // 스무스 스크롤이 지나치는 중간 섹션들로 활성 항목이 깜빡이지 않도록 클릭 대상에 고정한다.
+    // 실제 헤딩 id(=목차 링크의 href)로 고정한다 — _resolveAnchorTarget 이 탭/폴드 안의 대체
+    // 앵커를 돌려줄 수 있으나, 활성 표시는 목차 링크 기준이어야 하기 때문.
+    setPin(id);
     if (typeof window._scrollToElementWithAncestors === 'function') {
       window._scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
     } else {
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+    spyLastId = null;
+    updateActive();
   }
 
   function attachLinkInterceptors() {
-    ['tocNav', 'tocFloatingNav', 'wikiTocSidebarNav'].forEach((navId) => {
+    // 우측 사이드바(docs·right-toc)도 좌측과 동일하게 앵커 해석(_resolveAnchorTarget)과
+    // 조상 펼치기 스크롤을 태운다 — 빠지면 접힌 섹션/탭 안의 헤딩으로 이동하지 못한다.
+    ['tocNav', 'tocFloatingNav', 'wikiTocSidebarNav', 'wikiTocSidebarRightNav'].forEach((navId) => {
       const nav = document.getElementById(navId);
       if (nav && !nav._tocLinkIntercepted) {
         nav.addEventListener('click', interceptTocLinkClick);
         nav._tocLinkIntercepted = true;
       }
     });
+  }
+
+  /** 우측 사이드바 진행 레일 재계산을 짧은 디바운스로 합친다. build() 는 항목마다 rect 를
+   *  읽고 경로를 다시 재므로, ResizeObserver 의 연속 발화나 리사이즈 드래그에서 프레임마다
+   *  돌면 낭비다(스크롤바 레일의 scheduleRailSync 와 같은 정책). 마지막 호출 기준으로 한 번만
+   *  실행한다. */
+  const SIDEBAR_RAIL_DEBOUNCE = 120; // ms
+  let sidebarRailTimer: number | null = null;
+  function scheduleSidebarRailBuild(delay = SIDEBAR_RAIL_DEBOUNCE) {
+    if (sidebarRailTimer !== null) clearTimeout(sidebarRailTimer);
+    sidebarRailTimer = window.setTimeout(() => {
+      sidebarRailTimer = null;
+      sidebarRail.build();
+    }, delay);
   }
 
   /** 스크롤 스파이 + 링크 인터셉터 + FAB 가시성 옵저버 부착(멱등). */
@@ -542,17 +639,38 @@ export function createTocController(opts: TocControllerOptions = {}) {
     window.addEventListener('scroll', handler, { passive: true });
     window.addEventListener('resize', handler, { passive: true });
 
+    // 목차 클릭 고정 해제 트리거 — 사용자가 스스로 스크롤을 움직인 입력만 본다.
+    // scroll 이벤트는 클릭이 유발한 스무스 스크롤에서도 발생하므로 쓸 수 없다.
+    const PIN_RELEASE_KEYS = new Set([
+      'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar',
+    ]);
+    window.addEventListener('wheel', releasePin, { passive: true });
+    window.addEventListener('touchmove', releasePin, { passive: true });
+    window.addEventListener('keydown', (e) => {
+      if (!PIN_RELEASE_KEYS.has((e as KeyboardEvent).key)) return;
+      // 검색창·편집기에서의 Space/방향키는 문서 스크롤이 아니므로 고정을 건드리지 않는다.
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      releasePin();
+    }, { passive: true });
+
+    // 우측 목차 사이드바 진행 레일: 목차 자체의 크기(줄바꿈·폰트 로드·사이드바 폭)가 바뀌면
+    // 링크 좌표가 통째로 달라지므로 경로를 다시 그린다. 스크롤스파이의 활성 이동은
+    // updateActive 의 sidebarRail.sync() 가 담당하며 여기서는 다루지 않는다.
+    const rightNav = document.getElementById('wikiTocSidebarRightNav');
+    if (rightNav && typeof ResizeObserver === 'function') {
+      new ResizeObserver(() => scheduleSidebarRailBuild()).observe(rightNav);
+    }
+    // 폭만 바뀌어 nav 높이가 그대로인 리사이즈(들여쓰기 x 좌표는 달라진다)도 잡는다.
+    window.addEventListener('resize', () => scheduleSidebarRailBuild(), { passive: true });
+
     // 목차 레일: 클릭 위임 + 리사이즈 시 재구축(PC/모바일 경계 통과로 노출 조건이 바뀐다).
     const rail = document.getElementById('tocScrollRail');
     if (rail) {
       rail.addEventListener('click', onRailClick);
-      // 확장(전체 목차) 토글. 접힌 상태에서 pointerover 는 점 위에서만 발생하고(컨테이너는
-      // pointer-events:none), 펼친 뒤에는 레일 사각형 전체를 덮는 ::before 가 호버를 이어받아
-      // pointerleave 가 그 영역을 벗어날 때만 발생한다.
-      rail.addEventListener('pointerover', () => {
-        if (rail.classList.contains('toc-rail-expandable')) rail.classList.add('toc-rail-expanded');
-      });
-      rail.addEventListener('pointerleave', () => collapseRail(rail));
+      // 제목 펼침은 순수 CSS(`.toc-rail-labels:has(.toc-rail-dot:hover)`)로 처리한다 — 점은
+      // 자리를 옮기지 않고 라벨도 히트 테스트에 참여하지 않으므로(pointer-events:none) 호버가
+      // 끊겨 다시 붙는 진동이 없고, 호버 유지용 덮개나 JS 상태 토글이 필요 없다.
       window.addEventListener('resize', () => scheduleRailSync(160), { passive: true });
       // 이미지·폰트 로드로 본문 높이가 늘면 문서 내 비율이 달라지지만 mutation 은 발생하지
       // 않으므로(옵저버가 못 잡는다) 본문 크기 자체를 관찰해 좌표를 다시 계산한다.
@@ -604,9 +722,13 @@ export function createTocController(opts: TocControllerOptions = {}) {
       //     제외하지 않으면 스크롤 내내 디바운스가 리셋된다.
       //  ④ {timer:} 의 초 단위 textContent 갱신 — 헤딩 구성과는 무관하다.
       const railEl = document.getElementById('tocScrollRail');
+      //  ⑤ 우측 사이드바 진행 레일(#wikiTocSidebarRightRail)의 hidden/좌표 갱신 — 이 레일은
+      //     스크롤바 레일과 무관하며, 걸러내지 않으면 리사이즈마다 재동기가 재예약된다.
+      const sidebarRailEl = document.getElementById('wikiTocSidebarRightRail');
       const isRailNoise = (m: MutationRecord) => {
         const t = m.target;
         if (railEl && railEl.contains(t)) return true;
+        if (sidebarRailEl && (sidebarRailEl === t || sidebarRailEl.contains(t))) return true;
         if (!(t instanceof Element)) return false;
         if (t.id === 'scrollFabGroup') return true;
         if (t.classList.contains('wiki-timer')) return true;

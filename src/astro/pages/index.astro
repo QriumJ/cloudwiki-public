@@ -250,7 +250,16 @@ import ArticleFloatingTools from '../components/ArticleFloatingTools.astro';
     <!-- 우측 문서내 목차 사이드바 (LAYOUT_MODE="docs" 또는 "right-toc" 에서 노출, 문서 조회 페이지 한정) -->
     <aside class="wiki-toc-sidebar wiki-toc-sidebar-right d-none" id="wikiTocSidebarRight" aria-label="문서 목차">
       <div class="wiki-toc-sidebar-inner">
-        <nav class="wiki-toc-sidebar-nav" id="wikiTocSidebarRightNav"></nav>
+        <div class="wiki-toc-sidebar-title" id="wikiTocSidebarRightTitle"><i class="bi bi-list-columns-reverse"></i> 이 문서 내용</div>
+        <!-- 진행 레일 + 목차. 레일은 항목 좌측을 따라 그려지는 SVG path 하나이며(article/toc-sidebar-rail.ts),
+             목차와 같은 목차를 시각적으로만 중복 제공하므로 aria-hidden 이다. -->
+        <div class="wiki-toc-railed">
+          <svg class="wiki-toc-rail-svg" id="wikiTocSidebarRightRail" aria-hidden="true" focusable="false" hidden>
+            <path class="wiki-toc-rail-track" fill="none" stroke-width="2" stroke-linecap="round"></path>
+            <path class="wiki-toc-rail-active" fill="none" stroke-width="2" stroke-linecap="round"></path>
+          </svg>
+          <nav class="wiki-toc-sidebar-nav" id="wikiTocSidebarRightNav" aria-labelledby="wikiTocSidebarRightTitle"></nav>
+        </div>
       </div>
     </aside>
 
