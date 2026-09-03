@@ -1199,6 +1199,31 @@ html[data-theme="dark"] .user-dropdown-toggle {
   }
 }
 
+/* ── docs 레이아웃: 우측 목차 항목 일직선 정렬 ──
+   중첩 <ol> 의 들여쓰기를 제거해 H2 이상 항목도 최상위(H1) 항목과 같은 x 에 놓는다.
+   진행 레일(article/toc-sidebar-rail.ts)은 각 링크의 실제 left 좌표에서 경로를 뽑으므로,
+   들여쓰기가 사라지면 레벨 전환 곡선(C) 이 하나도 생기지 않고 카드 왼쪽을 따라 곧게
+   내려가는 한 줄이 된다. 사라진 계층 정보는 링크 앞 문단 번호(.wiki-toc-num — 본문
+   헤딩 번호와 동일한 "1.2." 형태)가 대신한다.
+   좌측 그룹 트리(.wiki-nav-sidebar)도 같은 `.wiki-toc-sidebar-nav` 클래스를 쓰므로
+   우측 목차 nav 로만 한정한다. */
+body[data-layout-mode="docs"] #wikiTocSidebarRightNav ol,
+body[data-layout-mode="docs"] #wikiTocSidebarRightNav ul {
+  padding-left: 0;
+}
+
+/* 번호와 제목을 두 칸으로 나눠, 번호 폭(1. vs 1.2.3.)이 달라도 제목이 밀리지 않고
+   여러 줄로 접힐 때 두 번째 줄이 제목 시작 위치에 맞춰 들어가도록 한다. */
+body[data-layout-mode="docs"] #wikiTocSidebarRightNav a {
+  display: flex;
+  gap: var(--wiki-space-1);
+}
+
+body[data-layout-mode="docs"] #wikiTocSidebarRightNav .wiki-toc-num {
+  flex: none;
+  margin-right: 0;
+}
+
 /* wide 모드: 좌·우 사이드바를 모두 숨겨 산만함을 제거하고, 본문을 화면 중앙에 넉넉한
    가독 폭으로 정렬한 몰입형 풀폭 읽기 레이아웃. 사이드바가 없으므로 문서 내 탐색은 본문
    상단에 float 되는 인라인 목차 카드(.wiki-toc-card)로 제공하며(default 모드와 동일), 스크롤
