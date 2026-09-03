@@ -32,7 +32,8 @@ export function isEmailDomainAllowed(email: string, restriction: string, listRaw
  * @param env SUPER_ADMIN_EMAILS를 포함하는 환경 바인딩
  * @returns 최고 관리자 이메일 Set
  */
-export function getSuperAdmins(env: Env['Bindings']): Set<string> {
+// DO 전용 Worker(cloudwiki-do)의 최소 env(Pick) 에서도 호출 가능하도록 필요한 키만 요구한다.
+export function getSuperAdmins(env: Pick<Env['Bindings'], 'SUPER_ADMIN_EMAILS'>): Set<string> {
     const emails = (env.SUPER_ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(e => e.length > 0);
     return new Set(emails);
 }
@@ -43,6 +44,6 @@ export function getSuperAdmins(env: Env['Bindings']): Set<string> {
  * @param env SUPER_ADMIN_EMAILS를 포함하는 환경 바인딩
  * @returns 이메일이 최고 관리자 목록에 있으면 true, 아니면 false
  */
-export function isSuperAdmin(email: string, env: Env['Bindings']): boolean {
+export function isSuperAdmin(email: string, env: Pick<Env['Bindings'], 'SUPER_ADMIN_EMAILS'>): boolean {
     return getSuperAdmins(env).has(email);
 }

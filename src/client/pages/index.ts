@@ -231,8 +231,8 @@ import { createTocController } from '../article/toc';
     }
 
     // 목차 사이드바 채우기는 src/client/article/toc.ts(wikiToc)로 추출됨. 동작 보존 위임 래퍼.
-    function populateTocSidebar(sidebarId: string, navId: string): boolean {
-      return wikiToc.populateSidebar(sidebarId, navId);
+    function populateTocSidebar(sidebarId: string, navId: string, includeNumbers?: boolean): boolean {
+      return wikiToc.populateSidebar(sidebarId, navId, includeNumbers);
     }
 
     // 문서 렌더 후 #tocNav 내용을 좌측 사이드바에 복제하고 노출 여부를 결정.
@@ -381,9 +381,9 @@ import { createTocController } from '../article/toc';
       }
     }
 
-    // docs 모드: 우측 문서내 목차 + 좌측 그룹 트리 동기화.
+    // docs 모드: 우측 문서내 목차 + 좌측 그룹 트리 동기화 (문단 번호는 새로 붙이지 않음).
     function syncDocsLayout() {
-      populateTocSidebar('wikiTocSidebarRight', 'wikiTocSidebarRightNav');
+      populateTocSidebar('wikiTocSidebarRight', 'wikiTocSidebarRightNav', false);
       const slug = currentPage && currentPage.slug ? currentPage.slug : '';
       renderGroupNav(slug);
     }

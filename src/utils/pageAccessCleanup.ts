@@ -19,7 +19,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
  */
 async function fetchRolesForUsers(
     db: D1Database,
-    env: Env['Bindings'],
+    env: Pick<Env['Bindings'], 'SUPER_ADMIN_EMAILS'>,
     userIds: number[],
 ): Promise<Array<{ id: number; role: string }>> {
     if (userIds.length === 0) return [];
@@ -51,7 +51,7 @@ async function fetchRolesForUsers(
  */
 export async function cleanupUnauthorizedSubscriptions(
     db: D1Database,
-    env: Env['Bindings'],
+    env: Pick<Env['Bindings'], 'SUPER_ADMIN_EMAILS'>,
     rbac: RBAC,
     pageId: number,
     mode: 'private' | 'deleted',
@@ -141,7 +141,7 @@ export function cleanupOrphanDiscussionMutes(
  */
 export async function filterAuthorizedUserIds(
     db: D1Database,
-    env: Env['Bindings'],
+    env: Pick<Env['Bindings'], 'SUPER_ADMIN_EMAILS'>,
     rbac: RBAC,
     userIds: number[],
     permission: string,

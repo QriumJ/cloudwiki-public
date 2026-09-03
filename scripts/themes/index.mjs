@@ -149,8 +149,8 @@ export const THEMEABLE_TOKENS = {
         // CSS 전반에서 광범위 소비되므로(var(--wiki-space-*)·radius·fs) 이 토큰만 덮어도
         // 사이트 전역 밀도/모서리/서체가 바뀐다. style.css :root 에 같은 키의 기본값이 있다.
         // 글꼴: 서체 교체(세리프/디스플레이 등). 웹폰트면 src/shared/cdn.ts FONTS.ui 동기화.
-        '--wiki-font-body': "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        '--wiki-font-heading': "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        '--wiki-font-body': "'Pretendard Variable', Pretendard, 'Inter', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Noto Sans KR', 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif",
+        '--wiki-font-heading': "'Pretendard Variable', Pretendard, 'Inter', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Noto Sans KR', 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif",
         // 밀도/여백(아래는 실소비처 있는 토큰만 — 여유 ↔ 압축). 더 세분한 --wiki-space-*/
         // --wiki-lh-* 스케일도 그 토큰을 참조하는 규칙이 있으면 동일하게 오버라이드된다.
         '--wiki-measure': '66ch',          // 산문 max-width(render.css .wiki-content)

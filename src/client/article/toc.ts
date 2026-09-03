@@ -70,8 +70,10 @@ export function createTocController(opts: TocControllerOptions = {}) {
   // {timer:} 초 단위 갱신처럼 헤딩과 무관한 본문 변경이 옵저버를 계속 깨우기 때문.
   let railSignature = '';
 
-  // ── 목차 사이드바 채우기 (헤딩 번호 포함) ──
-  function populateSidebar(sidebarId: string, navId: string): boolean {
+  // ── 목차 사이드바 채우기 ──
+  // docs 레이아웃에서는 본문 헤딩에 이미 번호가 있거나 중복으로 붙는 문제를 방지하기 위해
+  // 문단 번호 prefix(.wiki-toc-num)를 새로 붙이지 않는다(includeNumbers = false).
+  function populateSidebar(sidebarId: string, navId: string, includeNumbers?: boolean): boolean {
     const sidebar = document.getElementById(sidebarId);
     const nav = document.getElementById(navId);
     if (!sidebar || !nav) return false;
@@ -87,8 +89,11 @@ export function createTocController(opts: TocControllerOptions = {}) {
       if (navId === 'wikiTocSidebarRightNav') sidebarRail.build();
       return false;
     }
+    const withNumbers = typeof includeNumbers === 'boolean'
+      ? includeNumbers
+      : (window.appConfig?.layoutMode !== 'docs' && document.body.dataset.layoutMode !== 'docs');
     let html = (contentEl && typeof window.buildTocOlHtml === 'function')
-      ? window.buildTocOlHtml(contentEl, true)
+      ? window.buildTocOlHtml(contentEl, withNumbers)
       : '';
     if (!html) {
       const src = document.getElementById('tocNav');

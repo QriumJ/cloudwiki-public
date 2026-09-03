@@ -22,9 +22,12 @@ export type Env = {
         RAG_SEARCH_ENABLED?: string;   // "true" 면 RAG 플러그인 활성화
         RAG_AUTORAG_NAME?: string;     // AI Search(AutoRAG) 인스턴스 이름
         ANALYTICS?: AnalyticsEngineDataset;
-        // AdminJobDO 잡 러너 (역링크 재인덱싱/대량 이동/대량 삭제). 바인딩 없으면 잡 API 는 503.
+        // AdminJobDO 잡 러너 (역링크 재인덱싱/대량 이동/대량 삭제/RAG 백필). 클래스 구현은
+        // DO 전용 Worker(cloudwiki-do)가 소유하고 본체는 script_name 바인딩으로 접근한다.
+        // 바인딩 없으면 잡 API 는 503.
         ADMIN_JOB_DO?: DurableObjectNamespace;
-        // AdminJobDO alarm 틱당 서브리퀘스트 예산 (유료 950 / 무료 40 권장, 미설정 시 40)
+        // AdminJobDO alarm 틱당 서브리퀘스트 예산 (유료 950 / 무료 40 권장, 미설정 시 40).
+        // 클래스 구현 Worker(do-worker/wrangler.toml)의 vars 로 이동했다 — 본체에서는 미사용.
         JOB_SUBREQUEST_BUDGET?: string;
         AUTH_PROVIDERS: string;            // "google,discord"
         GOOGLE_CLIENT_ID: string;

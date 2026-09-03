@@ -101,11 +101,13 @@ export const ROLE_CASE_SQL = `CASE
 /**
  * 결과 배열에서 super_admin 이메일 기반으로 역할을 보정하고, 이메일 필드를 제거
  */
+// AdminJobDO(cloudwiki-do 전용 Worker)에서도 호출되므로 필요한 키만 Pick 으로 요구한다
+// (전체 Bindings 를 요구하면 DO Worker 가 불필요한 바인딩까지 갖춰야 한다).
 export function enrichRoles(
     results: any[],
     roleField: string,
     emailField: string,
-    env: Env['Bindings']
+    env: Pick<Env['Bindings'], 'SUPER_ADMIN_EMAILS'>
 ): void {
     for (const item of results) {
         if (item[emailField] && isSuperAdmin(item[emailField], env)) {

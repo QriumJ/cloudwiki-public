@@ -37,6 +37,7 @@ Cloudflare 프리티어만으로 셀프호스팅할 수 있는 서버리스 위�
 3. OAuth(Google / Discord) 제공자를 최소 하나 설정합니다.
 4. Cloudflare Workers에 GitHub 저장소를 연결해 배포하고, 도메인을 연결합니다.
 5. D1에 `migrations/schema.sql`을 실행해 스키마를 적용합니다.
+6. (선택) 관리자 잡 러너(역링크 재인덱싱 · 대량 이동/삭제 · RAG 백필)를 사용하려면 `do-worker/`의 DO 전용 Worker를 본체보다 먼저 배포하고 `wrangler.toml`의 Durable Object 바인딩 주석을 해제합니다. 이 단계를 건너뛰어도 위키는 정상 동작하며 잡 러너만 비활성입니다. 자세한 방법은 [docs/durable-object-worker.md](docs/durable-object-worker.md)를 참고하세요.
 
 ## 운영 비용
 

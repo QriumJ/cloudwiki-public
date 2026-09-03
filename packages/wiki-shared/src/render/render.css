@@ -239,33 +239,55 @@
 .wiki-content h1,
 .wiki-content h2,
 .wiki-content h3 {
+  color: var(--wiki-text);
+}
+
+.wiki-content h1 {
+  font-size: 2.25rem;
+  font-weight: 800;
   margin-top: var(--wiki-space-10);
   margin-bottom: var(--wiki-space-4);
-  font-weight: 700;
-  color: var(--wiki-text);
 }
 
 .wiki-content h2 {
   font-size: var(--wiki-fs-4xl);
-  padding-bottom: var(--wiki-space-2);
-  border-bottom: 1px solid var(--wiki-border);
-  /* 얇고 뚜렷한 선 */
+  font-weight: 750;
+  margin-top: 2.75rem;
+  margin-bottom: var(--wiki-space-4);
+  /* 모던 플랫 위계: 레거시 위키 1px border-bottom 제거, 스케일과 여백으로 구획 */
 }
 
-/* 헤딩 크기 스케일 — h2 1.6rem 아래로 일관된 단계. h5/h6 가 본문보다 작아지던
-   브라우저 기본값 문제 해소(모두 본문 이상 + 굵게). */
-.wiki-content h3 { font-size: var(--wiki-fs-2xl); }
-.wiki-content h4 { font-size: var(--wiki-fs-xl); }
-.wiki-content h5 { font-size: var(--wiki-fs-lg); }
-.wiki-content h6 { font-size: var(--wiki-fs-body); }
+/* 헤딩 크기 스케일 — h2(1.85rem)부터 본문(0.95rem)까지 명확하고 계층적인 단계 */
+.wiki-content h3 {
+  font-size: var(--wiki-fs-2xl);
+  font-weight: 700;
+  margin-top: 2.25rem;
+  margin-bottom: var(--wiki-space-3);
+  color: var(--wiki-text);
+}
 
-.wiki-content h4,
-.wiki-content h5,
-.wiki-content h6 {
+.wiki-content h4 {
+  font-size: var(--wiki-fs-xl);
+  font-weight: 650;
   margin-top: 1.75rem;
   margin-bottom: var(--wiki-space-3);
-  font-weight: 700;
   color: var(--wiki-text);
+}
+
+.wiki-content h5 {
+  font-size: var(--wiki-fs-lg);
+  font-weight: 600;
+  margin-top: var(--wiki-space-6);
+  margin-bottom: var(--wiki-space-2);
+  color: var(--wiki-text);
+}
+
+.wiki-content h6 {
+  font-size: var(--wiki-fs-body);
+  font-weight: 600;
+  margin-top: var(--wiki-space-5);
+  margin-bottom: var(--wiki-space-2);
+  color: var(--wiki-text-muted);
 }
 
 /* ── 접을 수 있는 섹션 ── */

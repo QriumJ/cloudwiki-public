@@ -1,7 +1,7 @@
 // 우측 목차 사이드바(#wikiTocSidebarRight — docs·right-toc 레이아웃)의 진행 레일.
 // 목차 항목 왼쪽을 따라 흐르는 SVG path 하나를 그려 두고(track), 같은 path 를 복제한
 // 두 번째 path(active)의 stroke-dasharray/­dashoffset 으로 "현재 섹션 구간만" 칠한다.
-// 항목마다 별도 요소를 만드는 방식과 달리 들여쓰기(레벨)가 바뀌는 지점이 곡선으로
+// 항목마다 별도 요소를 만드는 방식과 달리 들여쓰기(레벨)가 바뀌는 지점이 라운딩된 직각으로
 // 이어져 목차 전체가 하나의 선으로 읽히고, 활성 구간 이동도 두 속성의 transition 만으로
 // 끝난다(요소 생성/파괴 없음 → 스크롤 중 재레이아웃 0).
 //
@@ -15,8 +15,8 @@
 
 /** 항목 링크 왼쪽에서 레일까지 띄우는 거리(px). style.css 의 nav padding-left 와 짝. */
 const RAIL_GUTTER = 10;
-/** 레벨(x)이 바뀌는 지점을 잇는 베지어 제어점 거리(px). 클수록 완만한 S 자. */
-const RAIL_CURVE = 7;
+/** 레벨(x)이 바뀌는 꺾임 지점의 90도 라운딩 반경(px). */
+const RAIL_CORNER_RADIUS = 4;
 /** 이 개수를 넘는 목차는 레일을 그리지 않는다 — 구간마다 getTotalLength() 를 부르므로
  *  항목 수에 비례해 비용이 붙고, 그 밀도에서는 구간 하나가 1~2px 라 시각적 의미도 없다. */
 const RAIL_MAX_ITEMS = 300;
@@ -120,7 +120,15 @@ export function createTocSidebarRail(navId: string, svgId: string): TocSidebarRa
       if (i === 0) {
         d = `M${x} ${top}`;
       } else if (x !== prevX) {
-        const curve = `C${prevX} ${prevBottom + RAIL_CURVE} ${x} ${top - RAIL_CURVE} ${x} ${top}`;
+        // 레벨이 바뀌는 지점: 라운딩된 직각(두 개의 90도 라운드 코너 + 수평 연결선)으로 연결한다.
+        const dx = x - prevX;
+        const dirX = dx > 0 ? 1 : -1;
+        const dy = Math.max(0, top - prevBottom);
+        const midY = prevBottom + dy / 2;
+        const r = Math.min(RAIL_CORNER_RADIUS, Math.abs(dx) / 2, dy / 2);
+        const curve = r <= 0.5
+          ? `L${prevX} ${midY} L${x} ${midY} L${x} ${top}`
+          : `L${prevX} ${midY - r} Q${prevX} ${midY} ${prevX + dirX * r} ${midY} L${x - dirX * r} ${midY} Q${x} ${midY} ${x} ${midY + r} L${x} ${top}`;
         // 곡선 하나만 담은 임시 경로로 길이를 잰다(전체 경로 재파싱 회피).
         track.setAttribute('d', `M${prevX} ${prevBottom} ${curve}`);
         acc += track.getTotalLength();

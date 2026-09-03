@@ -36,7 +36,7 @@ function getDoStub(c: Context<Env>): DurableObjectStub | Response {
     const ns = c.env.ADMIN_JOB_DO;
     if (!ns) {
         return c.json({
-            error: '관리자 잡 러너(ADMIN_JOB_DO)가 비활성화되어 있습니다. wrangler.toml 의 Durable Object 바인딩과 migrations 를 적용한 뒤 배포하세요.',
+            error: '관리자 잡 러너(ADMIN_JOB_DO)가 비활성화되어 있습니다. DO 전용 Worker(cloudwiki-do)를 배포하고 wrangler.toml 의 Durable Object 바인딩(script_name)을 구성한 뒤 배포하세요. → docs/durable-object-worker.md',
         }, 503);
     }
     return ns.get(ns.idFromName('global'));

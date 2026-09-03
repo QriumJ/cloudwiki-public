@@ -89,8 +89,8 @@
      → default 무변화). 스킨이 --wiki-font-body/-heading 만 덮으면 세리프/디스플레이 등으로
      체감 변화를 크게 줄 수 있다. 웹폰트가 필요하면 src/shared/cdn.ts FONTS.ui 에 패밀리를
      추가하고, 항상 시스템/웹세이프 폴백을 둔다. (코드 글꼴은 위 --wiki-code-font 재사용.) */
-  --wiki-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --wiki-font-heading: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --wiki-font-body: 'Pretendard Variable', Pretendard, 'Inter', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Noto Sans KR', 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --wiki-font-heading: 'Pretendard Variable', Pretendard, 'Inter', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Noto Sans KR', 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
 
   /* 코드 표면색 — 본문(Prism 렌더) / 에디터(CodeMirror) 표면을 한 곳에서 관리.
      값은 기존과 바이트 동일(무변화 단일소스). 구문 하이라이트 팔레트
@@ -175,16 +175,16 @@
   /* sidebarWidth 는 기존 --wiki-sidebar-width 재사용 */
 
   /* 글자 크기 (font-size) — DESIGN.md fontSizes */
-  --wiki-fs-xs: 0.68rem;
-  --wiki-fs-sm: 0.75rem;
+  --wiki-fs-xs: 0.7rem;
+  --wiki-fs-sm: 0.78rem;
   --wiki-fs-base: 0.85rem;
-  --wiki-fs-body: 0.9rem;
-  --wiki-fs-md: 0.95rem;
-  --wiki-fs-lg: 1rem;
-  --wiki-fs-xl: 1.1rem;
-  --wiki-fs-2xl: 1.4rem;
-  --wiki-fs-3xl: 1.5rem;
-  --wiki-fs-4xl: 1.6rem;
+  --wiki-fs-body: 0.95rem;
+  --wiki-fs-md: 1rem;
+  --wiki-fs-lg: 1.1rem;
+  --wiki-fs-xl: 1.25rem;
+  --wiki-fs-2xl: 1.45rem;
+  --wiki-fs-3xl: 1.65rem;
+  --wiki-fs-4xl: 1.85rem;
 
   /* 행간 (line-height) — DESIGN.md lineHeights */
   --wiki-lh-tight: 1.2;
@@ -255,7 +255,7 @@ body {
   /* 본문 기본 행간 — 토큰화(기본값 --wiki-lh-loose = 1.7, 무변화). 테마가 행간을 바꾸려면
      이 토큰을 덮는다(reader 스킨이 여유로운 독서 행간으로 상향). */
   line-height: var(--wiki-lh-loose);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
   min-height: 100vh;
   /* 안티앨리어싱 강화로 글씨를 더 또렷하게 */
   -webkit-font-smoothing: antialiased;
@@ -274,7 +274,7 @@ h6,
 .navbar-brand,
 .wiki-article-title {
   font-family: var(--wiki-font-heading);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 /* ── Bootstrap Overrides for Theme Consistency ── */
@@ -1199,31 +1199,6 @@ html[data-theme="dark"] .user-dropdown-toggle {
   }
 }
 
-/* ── docs 레이아웃: 우측 목차 항목 일직선 정렬 ──
-   중첩 <ol> 의 들여쓰기를 제거해 H2 이상 항목도 최상위(H1) 항목과 같은 x 에 놓는다.
-   진행 레일(article/toc-sidebar-rail.ts)은 각 링크의 실제 left 좌표에서 경로를 뽑으므로,
-   들여쓰기가 사라지면 레벨 전환 곡선(C) 이 하나도 생기지 않고 카드 왼쪽을 따라 곧게
-   내려가는 한 줄이 된다. 사라진 계층 정보는 링크 앞 문단 번호(.wiki-toc-num — 본문
-   헤딩 번호와 동일한 "1.2." 형태)가 대신한다.
-   좌측 그룹 트리(.wiki-nav-sidebar)도 같은 `.wiki-toc-sidebar-nav` 클래스를 쓰므로
-   우측 목차 nav 로만 한정한다. */
-body[data-layout-mode="docs"] #wikiTocSidebarRightNav ol,
-body[data-layout-mode="docs"] #wikiTocSidebarRightNav ul {
-  padding-left: 0;
-}
-
-/* 번호와 제목을 두 칸으로 나눠, 번호 폭(1. vs 1.2.3.)이 달라도 제목이 밀리지 않고
-   여러 줄로 접힐 때 두 번째 줄이 제목 시작 위치에 맞춰 들어가도록 한다. */
-body[data-layout-mode="docs"] #wikiTocSidebarRightNav a {
-  display: flex;
-  gap: var(--wiki-space-1);
-}
-
-body[data-layout-mode="docs"] #wikiTocSidebarRightNav .wiki-toc-num {
-  flex: none;
-  margin-right: 0;
-}
-
 /* wide 모드: 좌·우 사이드바를 모두 숨겨 산만함을 제거하고, 본문을 화면 중앙에 넉넉한
    가독 폭으로 정렬한 몰입형 풀폭 읽기 레이아웃. 사이드바가 없으므로 문서 내 탐색은 본문
    상단에 float 되는 인라인 목차 카드(.wiki-toc-card)로 제공하며(default 모드와 동일), 스크롤
@@ -1477,12 +1452,19 @@ body[data-layout-mode="docs"] #wikiTocSidebarRightNav .wiki-toc-num {
 }
 
 .wiki-article-title {
+  font-size: 2.25rem;
+  line-height: 1.25;
   font-weight: 800;
-  margin-bottom: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-4);
   color: var(--wiki-text);
-  letter-spacing: -0.02em;
   word-break: break-all;
   overflow-wrap: break-word;
+}
+
+@media (max-width: 767.98px) {
+  .wiki-article-title {
+    font-size: 1.75rem;
+  }
 }
 
 /* 대체 title 이 설정된 문서에서 h1 아래에 실제 슬러그를 좌측 정렬·muted 작게 노출하는 라벨. */

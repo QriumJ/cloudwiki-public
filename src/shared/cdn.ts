@@ -66,6 +66,8 @@ export const CDN_URLS = {
 
 export const FONTS = {
     preconnect: ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'] as const,
+    // 기본 본문·제목 한글/영문 가변 글꼴: Pretendard Variable
+    pretendard: 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css',
     // 모든 페이지 공통: Inter + Outfit + Montserrat + Noto Sans KR + Noto Serif KR 슈퍼셋
     // (Noto Serif KR 은 세리프 계열 테마/스킨용; Montserrat 은 'VIA' 스킨의 본문/제목 글꼴)
     ui:   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Montserrat:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&family=Noto+Serif+KR:wght@400;500;600;700&display=swap',
@@ -159,6 +161,7 @@ export function renderHeadTags(bundles: BundleName[]): { prepend: string; append
     if (set.has('base')) {
         prepend += `<link rel="preconnect" href="${FONTS.preconnect[0]}">`;
         prepend += `<link rel="preconnect" href="${FONTS.preconnect[1]}" crossorigin>`;
+        prepend += `<link rel="stylesheet" href="${FONTS.pretendard}">`;
         prepend += `<link rel="stylesheet" href="${FONTS.ui}">`;
         prepend += `<link rel="stylesheet" href="${CDN_URLS.bootstrapCss}">`;
         prepend += `<link rel="stylesheet" href="${CDN_URLS.bootstrapIcons}">`;

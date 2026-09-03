@@ -1215,8 +1215,9 @@ app.onError(async (err, c) => {
     return new Response(res.body, { status: 500, headers: res.headers });
 });
 
-// Durable Object 클래스 export (wrangler 가 class_name 으로 요구).
-export { AdminJobDO } from './durable/adminJob';
+// AdminJobDO 클래스는 DO 전용 Worker(cloudwiki-do, do-worker/)가 export 한다 — 본체는 script_name
+// 으로 바인딩만 한다. Cloudflare 는 DO 를 구현(export)하는 Worker 에 프리뷰 URL 을 만들지 않으므로,
+// 본체에서 클래스 export 를 제거해야 브랜치 프리뷰가 동작한다 → docs/durable-object-worker.md
 
 export default {
     fetch: app.fetch,

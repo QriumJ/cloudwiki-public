@@ -43,7 +43,22 @@ import {
 // 무효화되고 전 엣지에 전파되지 않는다). TTL 만료/다음 편집으로 자가 치유된다.
 //
 
-type Bindings = Env['Bindings'];
+// AdminJobDO 가 실제로 사용하는 env 키만 Pick 으로 요구한다. 이 클래스는 본체(cloudwiki)가
+// 아니라 DO 전용 Worker(cloudwiki-do, do-worker/)에 배포되므로, 전체 Bindings 를 요구하면
+// 그 Worker 가 위키 전체 바인딩(D1·R2·KV·AI·시크릿…)을 불필요하게 갖춰야 한다.
+// 여기 나열된 키 = do-worker/wrangler.toml 이 갖춰야 할 최소 바인딩·vars 세트(단일 소스).
+// 키를 추가하면 do-worker/wrangler.toml 에도 대응 바인딩을 추가해야 한다(docs/durable-object-worker.md).
+type Bindings = Pick<
+    Env['Bindings'],
+    | 'DB'
+    | 'MEDIA'
+    | 'RAG_BUCKET'
+    | 'JOB_SUBREQUEST_BUDGET'
+    | 'WIKI_PUBLIC_BASE_URL'
+    | 'RAG_SEARCH_ENABLED'
+    | 'ENABLED_EXTENSIONS'
+    | 'SUPER_ADMIN_EMAILS'
+>;
 
 const META_KEY = 'job:meta';
 const PAYLOAD_KEY = 'job:payload';
