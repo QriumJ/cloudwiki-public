@@ -294,22 +294,45 @@
 .wiki-content .wiki-section-heading {
   cursor: pointer;
   display: flex;
+  /* 헤딩의 flex item 은 [제목 텍스트][유틸 버튼 묶음] 둘 뿐이다. 제목의 max-content 너비와
+     버튼 묶음이 한 줄에 들어가지 않으면 버튼 묶음만 다음 flex 줄로 내려가고(= 제목 줄바꿈이
+     모두 끝난 아래), 제목은 혼자 남은 첫 줄에서 헤딩 전체 너비로 줄바꿈된다. */
+  flex-wrap: wrap;
+  row-gap: 0.15em;
   align-items: baseline;
   user-select: none;
+  /* 토글 아이콘 자리폭(아이콘 1em × font-size 0.7em + 우측 여백) — 제목 행잉 인덴트에 쓴다. */
+  --wiki-heading-toggle-w: calc(0.7em + var(--wiki-space-2));
 }
 
-/* 헤딩 내용물(번호/텍스트/인라인 코드)을 하나의 flex item으로 감싸서
+/* 헤딩 내용물(토글 아이콘/번호/텍스트/인라인 코드)을 하나의 flex item으로 감싸서
    텍스트와 <code>가 분리되어 어긋나게 줄바꿈되지 않도록 한다.
    min-width:0 으로 내부 내용이 좁은 폭에서 자연스럽게 wrap 되도록 허용. */
 .wiki-content .wiki-section-heading-text {
   min-width: 0;
+  /* 토글 아이콘이 이 래퍼 안(맨 앞)에 있으므로, 두 번째 줄부터는 아이콘 자리폭만큼 들여써
+     첫 줄의 제목 시작선과 맞춘다(행잉 인덴트 = padding-left + 같은 크기의 음수 text-indent). */
+  padding-left: var(--wiki-heading-toggle-w, 0px);
+  text-indent: calc(-1 * var(--wiki-heading-toggle-w, 0px));
+}
+
+/* 음수 text-indent 는 래퍼 자신의 첫 줄에만 적용돼야 한다. text-indent 는 상속되므로
+   헤딩 안의 block container 자손(토글 아이콘·배지 등 inline-block)은 자기 첫 줄에 또
+   음수 들여쓰기가 걸려 내용이 왼쪽으로 밀린다 — 자손에서 상속을 끊는다. */
+.wiki-content .wiki-section-heading-text * {
+  text-indent: 0;
 }
 
 .wiki-section-toggle-icon {
+  /* 아이콘 자리폭을 --wiki-heading-toggle-w 계산과 일치시킨다(bi 글리프 1em 고정).
+     아이콘 폰트 로드 전 폴백 글리프가 1em 보다 넓을 수 있으므로 width 가 아닌 min-width 로
+     둬(로드 후엔 정확히 1em) 글리프가 박스를 넘쳐 제목 첫 글자와 겹치지 않게 한다. */
+  display: inline-block;
+  min-width: 1em;
+  text-align: center;
   margin-right: var(--wiki-space-2);
   font-size: 0.7em;
   color: var(--wiki-text-muted);
-  flex-shrink: 0;
 }
 
 .wiki-section-toggle-icon i {
@@ -839,6 +862,22 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   transform: translateY(1px);
 }
 
+/* 헤딩 유틸 버튼 묶음(복사/링크/편집) — 하나의 flex item 으로 묶어, 긴 제목에서
+   제목 줄바꿈이 모두 끝난 다음 줄로 통째로 내려가게 한다(제목 폭을 잠식하지 않는다). */
+.wiki-heading-utils {
+  display: inline-flex;
+  /* 버튼마다 font-size 가 달라(복사/편집 0.65em, 링크 0.85em) center 로 묶으면 종전 렌더와
+     세로 위치가 어긋난다. 버튼들이 헤딩의 직계 flex item 이던 때와 같은 baseline 정렬 유지. */
+  align-items: baseline;
+  /* 간격 값은 래퍼(=헤딩) font-size 기준이다. 버튼 자신의 font-size 기준이던 기존 값
+     (복사 0.35em×0.65 ≈ 0.23em, 링크 0.2em×0.85 ≈ 0.17em, 편집 0.2em×0.65 ≈ 0.13em)과
+     시각적으로 같아지도록 헤딩 기준으로 환산했다. */
+  gap: 0.15em;
+  flex: 0 0 auto;
+  margin-left: 0.23em;
+  vertical-align: middle;
+}
+
 /* 헤딩 섹션 복사 버튼 */
 .wiki-heading-copy-btn,
 .wiki-heading-link-btn {
@@ -847,7 +886,6 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   justify-content: center;
   width: 1.5em;
   height: 1.5em;
-  margin-left: 0.35em;
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--wiki-radius-md);
@@ -863,7 +901,6 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 .wiki-heading-link-btn {
-  margin-left: 0.2em;
   font-size: 0.85em;
 }
 
@@ -889,7 +926,6 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   justify-content: center;
   width: 1.5em;
   height: 1.5em;
-  margin-left: 0.2em;
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--wiki-radius-md);

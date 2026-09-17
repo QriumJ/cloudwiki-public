@@ -1917,7 +1917,7 @@ function _resolveAnchorTarget(rawId) {
         // .wiki-heading-num이 중첩될 수 있으므로, 직계 자식만 보지 않고 복제본에서
         // 번호 프리픽스/버튼류를 모두 제거한 뒤 순수 텍스트를 비교한다.
         const clone = h.cloneNode(true);
-        clone.querySelectorAll('.wiki-heading-num, .wiki-heading-copy-btn, .wiki-heading-link-btn, .wiki-heading-edit-btn').forEach(n => n.remove());
+        clone.querySelectorAll('.wiki-heading-num, .wiki-heading-utils, .wiki-heading-copy-btn, .wiki-heading-link-btn, .wiki-heading-edit-btn').forEach(n => n.remove());
         if (clone.textContent.trim() === rawId) return h;
     }
     return null;
@@ -2031,8 +2031,9 @@ function _wrapLevelSections(containerEl, level) {
             // 헤딩의 기존 내용(번호/텍스트/인라인 코드 등)을 단일 span으로 감싼다.
             // display:flex 헤딩에서 텍스트 노드와 <code>가 각기 다른 flex item으로
             // 분해되어 개별적으로 줄바꿈되는 버그(순서 뒤틀림)를 방지하기 위함.
-            if (!child.querySelector(':scope > .wiki-section-heading-text')) {
-                const textWrapper = document.createElement('span');
+            let textWrapper = child.querySelector(':scope > .wiki-section-heading-text');
+            if (!textWrapper) {
+                textWrapper = document.createElement('span');
                 textWrapper.className = 'wiki-section-heading-text';
                 while (child.firstChild) {
                     textWrapper.appendChild(child.firstChild);
@@ -2040,11 +2041,17 @@ function _wrapLevelSections(containerEl, level) {
                 child.appendChild(textWrapper);
             }
 
-            // 토글 아이콘 삽입 (왼쪽 끝)
-            const toggleIcon = document.createElement('span');
-            toggleIcon.className = 'wiki-section-toggle-icon';
-            toggleIcon.innerHTML = '<i class="bi bi-chevron-down"></i>';
-            child.insertBefore(toggleIcon, child.firstChild);
+            // 토글 아이콘 삽입 (제목 텍스트 래퍼 안쪽 맨 앞 = 헤딩 왼쪽 끝).
+            // 헤딩은 flex-wrap 컨테이너다(긴 제목이면 우측 유틸 버튼 묶음이 아래 줄로 내려간다).
+            // 아이콘을 헤딩의 직계 flex item 으로 두면 제목의 max-content 너비가 컨테이너를
+            // 넘을 때 제목만 다음 flex 줄로 밀려 아이콘이 혼자 한 줄을 차지하므로,
+            // 제목 텍스트와 같은 flex item 안에 둔다.
+            if (!textWrapper.querySelector(':scope > .wiki-section-toggle-icon')) {
+                const toggleIcon = document.createElement('span');
+                toggleIcon.className = 'wiki-section-toggle-icon';
+                toggleIcon.innerHTML = '<i class="bi bi-chevron-down"></i>';
+                textWrapper.insertBefore(toggleIcon, textWrapper.firstChild);
+            }
             child.classList.add('wiki-section-heading');
 
             // 섹션 래퍼 생성
@@ -2638,8 +2645,9 @@ function buildPortableHtml(contentEl, options) {
 
     // 5) UI 전용 요소 제거(목차 카드/토글/헤딩 버튼/코드 복사 버튼/각주 백링크/앵커 스팬)
     root.querySelectorAll(
-        '.wiki-toc-card, .wiki-toc-clear, .wiki-section-toggle-icon, .wiki-heading-copy-btn, ' +
-        '.wiki-heading-link-btn, .wiki-heading-edit-btn, .wiki-section-anchor, .wiki-anchor-target, ' +
+        '.wiki-toc-card, .wiki-toc-clear, .wiki-section-toggle-icon, .wiki-heading-utils, ' +
+        '.wiki-heading-copy-btn, .wiki-heading-link-btn, .wiki-heading-edit-btn, ' +
+        '.wiki-section-anchor, .wiki-anchor-target, ' +
         '.btn-copy-code, .wiki-fn-back, script, style, link, canvas'
     ).forEach(el => el.remove());
 
@@ -6429,9 +6437,17 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
             }
         };
 
-        // 복사 버튼은 항상 헤딩 끝(우측)에 위치한다.
-        // (chevron 토글 아이콘은 헤딩 좌측 끝에 위치한다.)
-        h.appendChild(copyBtn);
+        // 유틸 버튼(복사/링크/편집)은 하나의 래퍼(.wiki-heading-utils)로 묶어 헤딩 맨 끝에
+        // 붙인다. 헤딩이 flex-wrap 컨테이너이므로 제목과 한 줄에 들어가면 제목 오른쪽에,
+        // 들어가지 않으면 제목 줄바꿈이 모두 끝난 다음 줄 왼쪽에 놓인다 — 어느 경우든 제목
+        // 텍스트가 버튼 폭에 자리를 빼앗기지 않는다.
+        // (chevron 토글 아이콘은 제목 텍스트 래퍼 안쪽 좌측 끝에 위치한다.)
+        const staleUtils = h.querySelector(':scope > .wiki-heading-utils');
+        if (staleUtils) staleUtils.remove(); // 같은 DOM 에 재실행돼도 래퍼가 중복되지 않게
+        const utils = document.createElement('span');
+        utils.className = 'wiki-heading-utils';
+        h.appendChild(utils);
+        utils.appendChild(copyBtn);
 
         // 섹션 링크 복사 버튼 — 섹션 마크다운 복사 버튼과 섹션 편집 버튼 사이에 위치.
         let linkBtn = null;
@@ -6452,7 +6468,7 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
                     setTimeout(() => { linkBtn.innerHTML = '<i class="bi bi-link-45deg"></i>'; }, 2000);
                 }
             };
-            h.appendChild(linkBtn);
+            utils.appendChild(linkBtn);
         }
 
         // 비-트랜스클루전 헤딩에 한해, 원본 마크다운의 헤딩 라인 인덱스를 데이터 속성으로 부여한다.
@@ -6493,12 +6509,8 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
                 e.stopPropagation();
             });
 
-            // 링크 버튼 바로 다음 형제로 삽입 → [copy][link][edit]
-            if (linkBtn && linkBtn.nextSibling) {
-                h.insertBefore(editLink, linkBtn.nextSibling);
-            } else {
-                h.appendChild(editLink);
-            }
+            // 유틸 래퍼의 마지막에 붙인다 → [copy][link][edit]
+            utils.appendChild(editLink);
         }
     });
 }
