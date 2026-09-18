@@ -268,8 +268,12 @@ export function getSharedToolDefs(env: Env['Bindings']): McpToolDef[] {
 export function buildInformationIntro(c: Context<Env>, toolDefs: McpToolDef[] = MCP_TOOL_DEFS_ALL): string {
     const wikiName = c.env.WIKI_NAME;
     const syntaxNote = c.env.WIKI_SYNTAX ? `\n\n문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : '';
-    const blogNote = toolDefs.some(t => t.name === 'list_blog_posts')
-        ? '\n\n위키 문서 외에도 블로그(/blog) 포스트를 list_blog_posts / read_blog_post / get_blog_toc / read_blog_section 도구로 탐색할 수 있습니다. 블로그 포스트는 제목이 아닌 정수 id 로 식별합니다.'
+    // 블로그 안내문은 전달된 정의에 실제 포함된 이름만으로 동적 구성한다 — Off된 이름이
+    // 잔류하거나, 가시 블로그 도구가 있는데 안내가 통째로 사라지지 않도록.
+    const BLOG_TOOL_NAMES = ['list_blog_posts', 'read_blog_post', 'get_blog_toc', 'read_blog_section'];
+    const visibleBlogTools = BLOG_TOOL_NAMES.filter(n => toolDefs.some(t => t.name === n));
+    const blogNote = visibleBlogTools.length > 0
+        ? `\n\n위키 문서 외에도 블로그(/blog) 포스트를 ${visibleBlogTools.join(' / ')} 도구로 탐색할 수 있습니다. 블로그 포스트는 제목이 아닌 정수 id 로 식별합니다.`
         : '';
     return `이 도구는 ${wikiName} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}${blogNote}`;
 }

@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- MCP 편집 즉시반영 허용 여부. 1 이면 이 사용자의 MCP 도구 스키마에 즉시 적용용 apply_edit 도구가
   -- 추가로 노출되어, commit_edit(승인 대기 제출) 대신 새 리비전을 곧바로 만들 수 있다. 기본 0(제출만).
   mcp_instant_apply INTEGER NOT NULL DEFAULT 0,
+  -- 사용자별 MCP 도구 On/Off 설정. Off 처리된 도구명(JSON 배열, 예: '["search_rag","revert_page"]').
+  -- 기본 '[]' = 모두 On. Off된 도구는 MCP 핸드셰이크(tools/list·tools/call)에서 아예 없는 것처럼 취급된다.
+  mcp_disabled_tools TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER DEFAULT (unixepoch()),
   role TEXT DEFAULT 'user',  -- 'user', 'discussion_manager', 'admin', 'super_admin', 'banned', 'deleted'
   banned_until INTEGER,

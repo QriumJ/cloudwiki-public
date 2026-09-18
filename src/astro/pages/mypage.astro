@@ -344,6 +344,56 @@ import Footer from '../components/Footer.astro';
                 margin-left: 0.4rem;
             }
 
+            .mcp-tool-group {
+                font-size: 0.8rem;
+                font-weight: 700;
+                color: var(--wiki-text-muted);
+                letter-spacing: 0.5px;
+                margin: 0.9rem 0 0.4rem;
+            }
+
+            .mcp-tool-group:first-child {
+                margin-top: 0;
+            }
+
+            .mcp-tool-item {
+                display: flex;
+                align-items: flex-start;
+                gap: 0.75rem;
+                padding: 0.6rem 0.75rem;
+                border: 1px solid var(--wiki-border);
+                border-radius: 10px;
+                margin-bottom: 0.45rem;
+                background: var(--wiki-card-bg);
+            }
+
+            .mcp-tool-item.is-off {
+                opacity: 0.65;
+            }
+
+            .mcp-tool-item .tool-meta {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            .mcp-tool-item .tool-name {
+                font-family: var(--wiki-code-font);
+                font-weight: 700;
+                font-size: 0.9rem;
+                color: var(--wiki-primary);
+                word-break: break-all;
+            }
+
+            .mcp-tool-item .tool-desc {
+                font-size: 0.8rem;
+                color: var(--wiki-text-muted);
+                margin-top: 0.15rem;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+
             @media (max-width: 991px) {
                 .profile-container {
                     padding: 0 12px;
@@ -664,6 +714,21 @@ import Footer from '../components/Footer.astro';
     }
   }
 }`}</code></pre>
+                    </div>
+
+                    <!-- MCP 도구 On/Off -->
+                    <div class="d-flex justify-content-between align-items-center mt-4 mb-1 flex-wrap gap-2">
+                        <h5 class="mb-0 fs-6 fw-semibold"><i class="mdi mdi-toggle-switch-outline"></i> MCP 도구 설정</h5>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-wiki-outline" id="mcpToolsAllOnBtn" onclick="setAllMcpTools(true)">모두 켜기</button>
+                            <button class="btn btn-sm btn-wiki-outline" id="mcpToolsAllOffBtn" onclick="setAllMcpTools(false)">모두 끄기</button>
+                        </div>
+                    </div>
+                    <small class="text-muted d-block mb-2">
+                        내 권한에 제공된 MCP 도구 목록입니다. 끈 도구는 MCP 핸드셰이크에서 아예 없는 것처럼 제외되며 호출 시 거부됩니다. 기본값은 모두 켜짐입니다. 변경 후 연결된 MCP 클라이언트를 새로고침(재연결)하세요.
+                    </small>
+                    <div id="mcpToolsList" class="mb-2">
+                        <div class="text-center text-muted py-2">불러오는 중...</div>
                     </div>
                 </div>
 

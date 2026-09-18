@@ -20,6 +20,8 @@ export interface User {
     picture_private: number;
     /** MCP 편집 즉시반영 허용 여부(1=허용, MCP 도구에 apply_edit 즉시 적용 도구가 노출됨) */
     mcp_instant_apply: number;
+    /** 사용자별 MCP 도구 Off 목록(JSON 배열 문자열, 예: '["search_rag"]'). 기본 '[]' = 모두 On */
+    mcp_disabled_tools: string;
     role: 'user' | 'discussion_manager' | 'admin' | 'super_admin' | 'banned' | 'deleted';
     banned_until: number | null;
     last_namechange: number | null;

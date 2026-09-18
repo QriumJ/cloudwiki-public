@@ -8,6 +8,7 @@ import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
 import { resolveBearerAuth } from '../utils/mcpAuth';
 import {
+    MCP_TOOL_DEFS_ALL,
     getSharedToolDefs,
     buildInformationIntro,
     dispatchReadTool,
@@ -16,12 +17,18 @@ import {
 import {
     USER_TOOL_DEFS,
     ADMIN_ONLY_TOOL_DEFS,
+    USER_READ_TOOL_DEFS,
+    USER_EDIT_TOOL_DEFS,
+    ADMIN_ONLY_READ_TOOL_DEFS,
+    ADMIN_ONLY_EDIT_TOOL_DEFS,
     buildUserEditInformationSuffix,
     buildAdminOnlyInformationSuffix,
     dispatchAdminReadTool,
     dispatchAdminEditTool,
 } from './admin-mcp';
 import { APPLY_EDIT_TOOL_DEF, dispatchApplyEditTool } from '../utils/mcpDraftApply';
+import { getUserDisabledToolSet, filterToolsByDisabled } from '../utils/mcpToolPrefs';
+import type { McpToolDef } from '../utils/mcpDispatch';
 
 const mcpRoutes = new Hono<Env>();
 
@@ -83,6 +90,142 @@ function unauthorized(c: Context<Env>, description: string): Response {
 
 const GUEST_AUTH: McpAuthContext = { user: null, tokenId: null, scope: null };
 
+// ────────────────────────────────────────────────────────────────
+// MCP 도구 가시성 헬퍼 (마이페이지 On/Off API 와 공용).
+// 레이어링: guest=공용 읽기, wiki:edit=+USER, instant_apply=+apply_edit, admin=+ADMIN.
+// 공용 읽기는 환경(RAG 활성 여부)에 따라 search_rag 포함 여부가 갈린다.
+// ────────────────────────────────────────────────────────────────
+
+export type McpToolGroup =
+    | 'shared'
+    | 'user_read'
+    | 'user_edit'
+    | 'instant_apply'
+    | 'admin_read'
+    | 'admin_edit';
+
+export interface McpGroupedToolInfo {
+    name: string;
+    description: string;
+    group: McpToolGroup;
+    enabled: boolean;
+}
+
+// 동일 핸들러를 공유하는 별칭 도구 묶음. 이름 단위 On/Off 에서 한쪽만 끄고
+// 다른 쪽으로 우회 호출할 수 없도록, 묶음 내 하나라도 Off 면 전체를 제외한다.
+const MCP_TOOL_ALIAS_GROUPS: string[][] = [
+    ['get_document_category', 'get_document_categoty'],
+];
+
+/** Off 목록에 별칭 묶음을 전개한다 — 묶음 내 하나라도 포함되면 묶음 전체를 포함. */
+export function expandToolNamesWithAliases(names: Iterable<string>): string[] {
+    const set = new Set(names);
+    for (const group of MCP_TOOL_ALIAS_GROUPS) {
+        if (group.some(n => set.has(n))) {
+            for (const n of group) set.add(n);
+        }
+    }
+    return [...set];
+}
+
+/** RBAC + RAG + instant_apply 레이어링까지 적용한 기본 노출 목록 (On/Off 미적용). */
+export function getBaseVisibleToolDefs(
+    env: Env['Bindings'],
+    rbac: RBAC,
+    user: User | null,
+): McpToolDef[] {
+    const role = user ? user.role : 'guest';
+    const canEdit = rbac.can(role, 'wiki:edit');
+    const isAdmin = rbac.can(role, 'admin:access');
+    const canInstantApply = canEdit && !!user?.mcp_instant_apply;
+    const sharedToolDefs = getSharedToolDefs(env);
+    return [
+        ...sharedToolDefs,
+        ...(canEdit ? USER_TOOL_DEFS : []),
+        ...(canInstantApply ? [APPLY_EDIT_TOOL_DEF as McpToolDef] : []),
+        ...(isAdmin ? ADMIN_ONLY_TOOL_DEFS : []),
+    ];
+}
+
+/** 기본 노출 목록에 사용자별 On/Off 설정을 적용한 핸드셰이크용 최종 목록. */
+export function getVisibleToolDefsWithPrefs(
+    env: Env['Bindings'],
+    rbac: RBAC,
+    user: User | null,
+): McpToolDef[] {
+    const base = getBaseVisibleToolDefs(env, rbac, user);
+    if (!user) return base;
+    const disabled = new Set(expandToolNamesWithAliases(getUserDisabledToolSet(user)));
+    return filterToolsByDisabled(base, disabled);
+}
+
+/**
+ * 역할 기준 전체 도구명 (환경 게이트 무시 — RAG 비활성·즉시반영 OFF 때도 포함).
+ * "모두 끄기" 저장값과 단건/일괄 토글의 검증 범위로 사용한다. 역할 밖 도구는
+ * 저장 자체를 거부해 승격 후 예상 밖 Off 부활을 막는다.
+ */
+export function getRoleScopeToolNames(rbac: RBAC, user: User | null): string[] {
+    const role = user ? user.role : 'guest';
+    const names = [...MCP_TOOL_DEFS_ALL.map(t => t.name)];
+    if (rbac.can(role, 'wiki:edit')) {
+        names.push(...USER_TOOL_DEFS.map(t => t.name), APPLY_EDIT_TOOL_DEF.name);
+    }
+    if (rbac.can(role, 'admin:access')) {
+        names.push(...ADMIN_ONLY_TOOL_DEFS.map(t => t.name));
+    }
+    return [...new Set(names)];
+}
+
+/**
+ * 저장된 Off 중 현재 목록에 표시되지 않는 이름 (역할 범위 내·환경 게이트로 숨음 —
+ * RAG 비활성 시 search_rag, 즉시반영 OFF 시 apply_edit).
+ * 역할 범위 밖 이름(강등 후 잔재 등)은 제외한다. 마이페이지에서 투명성 안내용.
+ */
+export function getHiddenDisabledToolNames(
+    env: Env['Bindings'],
+    rbac: RBAC,
+    user: User | null,
+): string[] {
+    if (!user) return [];
+    const baseNames = new Set(getBaseVisibleToolDefs(env, rbac, user).map(t => t.name));
+    const scopeNames = new Set(getRoleScopeToolNames(rbac, user));
+    const storedOff = new Set(expandToolNamesWithAliases(getUserDisabledToolSet(user)));
+    return [...storedOff].filter(n => scopeNames.has(n) && !baseNames.has(n)).sort();
+}
+
+/** 전체 알려진 도구명 (유효성 검증용, information 제외 — 환경 무관 고정 집합). */
+export function getAllKnownMcpToolNames(): string[] {
+    return [
+        ...MCP_TOOL_DEFS_ALL,
+        ...USER_TOOL_DEFS,
+        APPLY_EDIT_TOOL_DEF as McpToolDef,
+        ...ADMIN_ONLY_TOOL_DEFS,
+    ].map(t => t.name);
+}
+
+/** 마이페이지 표시용: 자신의 권한에 제공된 도구 목록을 그룹·설명·On/Off 상태와 함께 반환. */
+export function getGroupedAvailableTools(
+    env: Env['Bindings'],
+    rbac: RBAC,
+    user: User | null,
+): McpGroupedToolInfo[] {
+    const base = getBaseVisibleToolDefs(env, rbac, user);
+    const disabled = new Set(expandToolNamesWithAliases(getUserDisabledToolSet(user)));
+    const userRead = new Set(USER_READ_TOOL_DEFS.map(t => t.name));
+    const userEdit = new Set(USER_EDIT_TOOL_DEFS.map(t => t.name));
+    const adminRead = new Set(ADMIN_ONLY_READ_TOOL_DEFS.map(t => t.name));
+    const adminEdit = new Set(ADMIN_ONLY_EDIT_TOOL_DEFS.map(t => t.name));
+    return base.map(def => {
+        let group: McpToolGroup = 'shared';
+        if (userRead.has(def.name)) group = 'user_read';
+        else if (userEdit.has(def.name)) group = 'user_edit';
+        else if (def.name === APPLY_EDIT_TOOL_DEF.name) group = 'instant_apply';
+        else if (adminRead.has(def.name)) group = 'admin_read';
+        else if (adminEdit.has(def.name)) group = 'admin_edit';
+        return { name: def.name, description: def.description, group, enabled: !disabled.has(def.name) };
+    });
+}
+
 async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | Response> {
     const res = await resolveBearerAuth(c);
     // 헤더가 아예 없으면 guest 모드 — OAuth 흐름을 시작하지 않은 호출자에게 읽기 도구를 허용.
@@ -132,19 +275,18 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
     const isAdmin = rbac.can(role, 'admin:access');
     const canSeePrivate = rbac.can(role, 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
-    // MCP 편집 즉시반영 허용(마이페이지 설정) 사용자에게만 apply_edit(즉시 적용) 도구를 추가 노출한다.
-    // 설정을 켠 wiki:edit 사용자만 대상 — guest/권한 강등 사용자는 애초에 canEdit=false 로 배제된다.
-    const canInstantApply = canEdit && !!user?.mcp_instant_apply;
     // 단계적으로 노출 도구를 합성한다 — guest 는 read 도구만, wiki:edit 는 + USER_TOOL_DEFS,
-    // admin:access 는 + ADMIN_ONLY_TOOL_DEFS. 공용 read 도구는 환경(RAG 활성 여부)에 따라 search_rag 포함.
-    const sharedToolDefs = getSharedToolDefs(c.env);
-    const visibleToolDefs = [
-        ...sharedToolDefs,
-        ...(canEdit ? USER_TOOL_DEFS : []),
-        ...(canInstantApply ? [APPLY_EDIT_TOOL_DEF] : []),
-        ...(isAdmin ? ADMIN_ONLY_TOOL_DEFS : []),
-    ];
+    // instant_apply 설정 시 + apply_edit, admin:access 는 + ADMIN_ONLY_TOOL_DEFS.
+    // 사용자별 On/Off(mcp_disabled_tools)까지 적용하므로 Off된 도구는 목록·호출 모두에서
+    // 아예 없는 것처럼 취급된다. 상세 레이어링은 getVisibleToolDefsWithPrefs 공용 헬퍼.
+    const visibleToolDefs = getVisibleToolDefsWithPrefs(c.env, rbac, user);
     const visibleToolNames = new Set(visibleToolDefs.map(t => t.name));
+    const enabledNames = visibleToolNames;
+    // information 도구 본문용 공용 읽기 정의도 동일하게 Off 필터를 적용한다 (별칭 전개 포함).
+    const sharedToolDefs = filterToolsByDisabled(
+        getSharedToolDefs(c.env),
+        new Set(expandToolNamesWithAliases(getUserDisabledToolSet(user))),
+    );
 
     // 1. 핸드셰이크: initialize
     if (method === 'initialize') {
@@ -174,8 +316,8 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
     if (method === 'tools/list') {
         const intro = buildInformationIntro(c, sharedToolDefs);
         const userName = user?.name || '';
-        const userSuffix = canEdit ? buildUserEditInformationSuffix(userName) : '';
-        const adminSuffix = isAdmin ? buildAdminOnlyInformationSuffix(userName) : '';
+        const userSuffix = canEdit ? buildUserEditInformationSuffix(userName, enabledNames) : '';
+        const adminSuffix = isAdmin ? buildAdminOnlyInformationSuffix(userName, enabledNames) : '';
         const toolNames = visibleToolDefs.map(t => t.name).join(', ');
         const informationDescription = `${intro}${userSuffix}${adminSuffix}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
         return {

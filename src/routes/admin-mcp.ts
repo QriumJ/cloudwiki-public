@@ -2249,29 +2249,76 @@ export const ADMIN_ONLY_TOOL_DEFS: McpToolDef[] = [
 
 // /api/mcp 의 information 도구가 일반 유저(`wiki:edit`) 에게 추가로 덧붙여 보여줄 가이드.
 // 관리자에게도 동일하게 노출된다.
-export function buildUserEditInformationSuffix(userName: string): string {
-    const readIntro = `\n\n## 편집 보조 읽기 도구 (현재 인증된 사용자: ${userName})\n${USER_READ_TOOL_DEFS.map(t => `- ${t.name}`).join('\n')}`;
-    const editIntro = `\n\n## 편집 도구\n\n` +
-        `**stateful draft 모델**: create_or_update_page / patch_page / edit_section 은 즉시 저장하지 않고 \`mcp_drafts\` 에 누적합니다 ` +
-        `(같은 슬러그에 대해 사용자별 1개). 응답으로 \`draft_id\` 를 받고, 편집이 끝나면 commit_edit(draft_id, summary) 를 호출해 ` +
-        `승인 대기로 제출합니다 — 사용자가 /mypage#mcp-submissions 에서 승인해야 비로소 리비전이 생성됩니다. 시작 시점 이후 다른 사용자가 페이지를 수정했으면 commit_edit 가 충돌로 거부합니다 ` +
-        `(이 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성). draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.\n\n` +
-        `**⚠️ 헤딩 작성 규칙**: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ` +
-        `헤딩 텍스트에 번호를 직접 적지 마세요 (예: \`## 1. 개요\` ❌ → \`## 개요\` ✅). 직접 적으면 렌더링 시 "1. 1. 개요" 처럼 중복 번호가 표시됩니다. ` +
-        `목차 내 다른 섹션을 참조할 때는 \`[[문서#s-1.2]]\` 형식의 섹션 앵커를 사용하세요.\n\n` +
-        `**항상 승인 대기로 제출**: commit_edit 를 호출하면 draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. ` +
-        `본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다. ` +
-        `승인 대기 상태 draft 는 list_drafts / read_draft 의 \`status\` 필드가 \`pending_approval\` 로 표시되며, AI 측에서는 더 이상 수정할 수 없습니다 (discard_edit 로 폐기만 가능).\n\n` +
-        `**즉시 적용** (draft 모델 미사용): revert_page.\n\n` +
-        USER_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n') +
-        `\n\n리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`;
-    return `${readIntro}${editIntro}`;
+// enabledNames 가 주어지면 Off 처리된 도구는 목록에서 제외한다 — 핸드셰이크에서
+// 아예 없는 것처럼 취급하기 위함. 해당 계층의 도구가 하나도 남지 않으면 빈 문자열.
+export function buildUserEditInformationSuffix(userName: string, enabledNames?: Set<string>): string {
+    const visibleRead = enabledNames
+        ? USER_READ_TOOL_DEFS.filter(t => enabledNames.has(t.name))
+        : USER_READ_TOOL_DEFS;
+    const visibleEdit = enabledNames
+        ? USER_EDIT_TOOL_DEFS.filter(t => enabledNames.has(t.name))
+        : USER_EDIT_TOOL_DEFS;
+    if (visibleRead.length === 0 && visibleEdit.length === 0) return '';
+    // 비어 있는 하위 섹션은 헤더째 생략한다 — Off된 도구의 이름이 안내문에 남지 않도록.
+    const parts: string[] = [];
+    if (visibleRead.length > 0) {
+        parts.push(`\n\n## 편집 보조 읽기 도구 (현재 인증된 사용자: ${userName})\n${visibleRead.map(t => `- ${t.name}`).join('\n')}`);
+    }
+    if (visibleEdit.length > 0) {
+        // 장문 prose 가 하드코딩으로 언급하는 도구들. 하나라도 Off 면 Off된 이름이
+        // 안내문에 잔류하므로, 최소 안내(켜져 있는 도구 목록만)로 대체한다.
+        const PROSE_NAMED_TOOLS = [
+            'create_or_update_page', 'patch_page', 'edit_section',
+            'commit_edit', 'discard_edit', 'read_document',
+            'list_drafts', 'read_draft',
+        ];
+        const fullProse = !enabledNames || PROSE_NAMED_TOOLS.every(n => enabledNames.has(n));
+        if (!fullProse) {
+            parts.push(`\n\n## 편집 도구\n\n사용 가능한 편집 도구는 다음과 같습니다.\n\n` +
+                visibleEdit.map(t => `- ${t.name}`).join('\n') +
+                `\n\n리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`);
+        } else {
+        // revert_page 가 Off 면 즉시 적용 안내 문장도 함께 생략한다.
+        const instantApplyNote = visibleEdit.some(t => t.name === 'revert_page')
+            ? `**즉시 적용** (draft 모델 미사용): revert_page.\n\n`
+            : '';
+        parts.push(`\n\n## 편집 도구\n\n` +
+            `**stateful draft 모델**: create_or_update_page / patch_page / edit_section 은 즉시 저장하지 않고 \`mcp_drafts\` 에 누적합니다 ` +
+            `(같은 슬러그에 대해 사용자별 1개). 응답으로 \`draft_id\` 를 받고, 편집이 끝나면 commit_edit(draft_id, summary) 를 호출해 ` +
+            `승인 대기로 제출합니다 — 사용자가 /mypage#mcp-submissions 에서 승인해야 비로소 리비전이 생성됩니다. 시작 시점 이후 다른 사용자가 페이지를 수정했으면 commit_edit 가 충돌로 거부합니다 ` +
+            `(이 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성). draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.\n\n` +
+            `**⚠️ 헤딩 작성 규칙**: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ` +
+            `헤딩 텍스트에 번호를 직접 적지 마세요 (예: \`## 1. 개요\` ❌ → \`## 개요\` ✅). 직접 적으면 렌더링 시 "1. 1. 개요" 처럼 중복 번호가 표시됩니다. ` +
+            `목차 내 다른 섹션을 참조할 때는 \`[[문서#s-1.2]]\` 형식의 섹션 앵커를 사용하세요.\n\n` +
+            `**항상 승인 대기로 제출**: commit_edit 를 호출하면 draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. ` +
+            `본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다. ` +
+            `승인 대기 상태 draft 는 list_drafts / read_draft 의 \`status\` 필드가 \`pending_approval\` 로 표시되며, AI 측에서는 더 이상 수정할 수 없습니다 (discard_edit 로 폐기만 가능).\n\n` +
+            instantApplyNote +
+            visibleEdit.map(t => `- ${t.name}`).join('\n') +
+            `\n\n리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`);
+        }
+    }
+    return parts.join('');
 }
 
 // /api/mcp 의 information 도구가 관리자에게만 추가로 덧붙여 보여줄 가이드.
-export function buildAdminOnlyInformationSuffix(userName: string): string {
-    const readIntro = `\n\n## 관리자 전용 읽기 도구 (현재 인증된 관리자: ${userName})\n${ADMIN_ONLY_READ_TOOL_DEFS.map(t => `- ${t.name}`).join('\n')}`;
-    const editIntro = `\n\n## 관리자 전용 편집 도구 (즉시 적용)\n` +
-        ADMIN_ONLY_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n');
-    return `${readIntro}${editIntro}`;
+// enabledNames 가 주어지면 Off 처리된 도구는 목록에서 제외한다. 남는 도구가 없으면 빈 문자열.
+export function buildAdminOnlyInformationSuffix(userName: string, enabledNames?: Set<string>): string {
+    const visibleRead = enabledNames
+        ? ADMIN_ONLY_READ_TOOL_DEFS.filter(t => enabledNames.has(t.name))
+        : ADMIN_ONLY_READ_TOOL_DEFS;
+    const visibleEdit = enabledNames
+        ? ADMIN_ONLY_EDIT_TOOL_DEFS.filter(t => enabledNames.has(t.name))
+        : ADMIN_ONLY_EDIT_TOOL_DEFS;
+    if (visibleRead.length === 0 && visibleEdit.length === 0) return '';
+    // 비어 있는 하위 섹션은 헤더째 생략한다.
+    const parts: string[] = [];
+    if (visibleRead.length > 0) {
+        parts.push(`\n\n## 관리자 전용 읽기 도구 (현재 인증된 관리자: ${userName})\n${visibleRead.map(t => `- ${t.name}`).join('\n')}`);
+    }
+    if (visibleEdit.length > 0) {
+        parts.push(`\n\n## 관리자 전용 편집 도구 (즉시 적용)\n` +
+            visibleEdit.map(t => `- ${t.name}`).join('\n'));
+    }
+    return parts.join('');
 }

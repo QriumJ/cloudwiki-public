@@ -32,6 +32,7 @@
             loadSessions();
             loadMcpClients();
             loadMcpApiKey();
+            loadMcpTools();
             loadMcpSubmissions();
             checkNameChangeStatus();
             showPictureUpdateResult();
@@ -221,6 +222,8 @@
                 if (!res.ok) throw new Error(data.error || '변경 실패');
 
                 window.currentUser.mcp_instant_apply = data.enabled ? 1 : 0;
+                // 즉시반영 설정에 따라 apply_edit 노출이 바뀌므로 도구 목록을 다시 불러온다.
+                loadMcpTools();
 
                 Swal.fire({
                     icon: 'success',
@@ -1586,6 +1589,159 @@
             }
         }
 
+        // ─── MCP 도구 On/Off ───────────────────────────────────────────
+        const MCP_TOOL_GROUP_LABELS = {
+            shared: '읽기·검색',
+            user_read: '편집 보조 읽기',
+            user_edit: '편집 (draft)',
+            instant_apply: '즉시 적용',
+            admin_read: '관리자 읽기',
+            admin_edit: '관리자 편집',
+        };
+        const MCP_TOOL_GROUP_ORDER = ['shared', 'user_read', 'user_edit', 'instant_apply', 'admin_read', 'admin_edit'];
+
+        // 저장 중 중복 제출 방지 — 단건 토글과 모두 켜기/끄기가 동시에 PUT 되면
+        // 서버 CAS 가 409 로 막아주지만, UX 차원에서 선제적으로 잠근다.
+        let mcpToolsSaving = false;
+        function setMcpToolsSaving(saving) {
+            mcpToolsSaving = saving;
+            document.querySelectorAll('[data-mcp-tool-toggle]').forEach(el => { el.disabled = saving; });
+            const allOn = document.getElementById('mcpToolsAllOnBtn');
+            const allOff = document.getElementById('mcpToolsAllOffBtn');
+            if (allOn) allOn.disabled = saving;
+            if (allOff) allOff.disabled = saving;
+        }
+
+        // 렌더 시퀀스 토큰 — 즉시반영 토글의 fire-and-forget loadMcpTools 와
+        // 단건/전체 PUT 렌더가 경쟁할 때 느린 응답이 최신 렌더를 덮지 못하게 한다.
+        let mcpToolsSeq = 0;
+        async function loadMcpTools() {
+            const listEl = document.getElementById('mcpToolsList');
+            if (!listEl) return;
+            const mySeq = ++mcpToolsSeq;
+            try {
+                const res = await fetch('/api/me/mcp-tools');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                if (mySeq !== mcpToolsSeq) return; // stale — 최신 렌더를 덮지 않는다.
+                renderMcpTools(data.tools || [], data.hidden_disabled || []);
+            } catch (e) {
+                if (mySeq !== mcpToolsSeq) return;
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
+            }
+        }
+
+        function renderMcpTools(tools, hiddenDisabled) {
+            const listEl = document.getElementById('mcpToolsList');
+            if (!listEl) return;
+            if (!tools.length) {
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-plug', title: '제공된 MCP 도구가 없습니다' });
+                return;
+            }
+            const grouped = new Map();
+            for (const t of tools) {
+                if (!grouped.has(t.group)) grouped.set(t.group, []);
+                grouped.get(t.group).push(t);
+            }
+            let html = '';
+            for (const g of MCP_TOOL_GROUP_ORDER) {
+                const items = grouped.get(g);
+                if (!items || !items.length) continue;
+                html += `<div class="mcp-tool-group">${window.escapeHtml(MCP_TOOL_GROUP_LABELS[g] || g)} · ${items.length}</div>`;
+                for (const t of items) {
+                    const checked = t.enabled ? 'checked' : '';
+                    const offCls = t.enabled ? '' : ' is-off';
+                    html += `
+                        <div class="mcp-tool-item${offCls}">
+                            <div class="tool-meta">
+                                <div class="tool-name">${window.escapeHtml(t.name)}</div>
+                                <div class="tool-desc" title="${window.escapeHtml(t.description || '')}">${window.escapeHtml(t.description || '')}</div>
+                            </div>
+                            <div class="form-check form-switch flex-shrink-0 mt-1">
+                                <input class="form-check-input" type="checkbox" role="switch" ${checked}
+                                    data-mcp-tool-toggle="${window.escapeHtml(t.name)}" aria-label="${window.escapeHtml(t.name)} 사용 여부">
+                            </div>
+                        </div>`;
+                }
+            }
+            html += `<small class="text-muted d-block mt-1">Off된 도구는 다음에 MCP 클라이언트가 다시 연결(tools/list)할 때 목록에서 제외됩니다.</small>`;
+            if (hiddenDisabled && hiddenDisabled.length) {
+                html += `<small class="text-muted d-block mt-1">현재 조건(RAG 비활성·즉시반영 OFF)에서는 표시되지 않지만 꺼져 있는 도구 ${hiddenDisabled.length}개: <code>${hiddenDisabled.map(n => window.escapeHtml(n)).join('</code>, <code>')}</code></small>`;
+            }
+            listEl.innerHTML = html;
+            listEl.querySelectorAll('[data-mcp-tool-toggle]').forEach(input => {
+                input.addEventListener('change', () => toggleMcpTool(input));
+            });
+        }
+
+        async function toggleMcpTool(input) {
+            if (mcpToolsSaving) {
+                input.checked = !input.checked;
+                return;
+            }
+            const tool = input.getAttribute('data-mcp-tool-toggle') || '';
+            const enabled = !!input.checked;
+            setMcpToolsSaving(true);
+            try {
+                const res = await fetch('/api/me/mcp-tools', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tool, enabled })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || '변경 실패');
+                mcpToolsSeq++; // 진행 중 loadMcpTools 가 있으면 무효화 — PUT 응답 렌더가 최신이다.
+                renderMcpTools(data.tools || [], data.hidden_disabled || []);
+                Swal.fire({
+                    icon: 'success',
+                    // Swal title 은 HTML 렌더링이므로 도구명을 이스케이프한다.
+                    title: enabled ? `${window.escapeHtml(tool)} 도구를 켰습니다.` : `${window.escapeHtml(tool)} 도구를 껐습니다.`,
+                    text: 'MCP 클라이언트를 새로고침하면 반영됩니다.',
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 2000,
+                });
+            } catch (err) {
+                input.checked = !enabled;
+                Swal.fire('오류', err.message, 'error');
+            } finally {
+                setMcpToolsSaving(false);
+            }
+        }
+
+        async function setAllMcpTools(enabled) {
+            if (mcpToolsSaving) return;
+            setMcpToolsSaving(true);
+            try {
+                // 서버에서 역할 범위 전체를 일괄 적용한다. DOM 스냅샷을 보내지 않으므로
+                // 화면에 안 보이는 도구(즉시반영 OFF 시 apply_edit 등)까지 커버되고,
+                // 목록 로드 실패 시 빈 배열을 보내는 반전 버그도 없다.
+                const res = await fetch('/api/me/mcp-tools', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ all: enabled })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || '변경 실패');
+                mcpToolsSeq++; // 진행 중 loadMcpTools 가 있으면 무효화 — PUT 응답 렌더가 최신이다.
+                renderMcpTools(data.tools || [], data.hidden_disabled || []);
+                Swal.fire({
+                    icon: 'success',
+                    title: enabled ? '모든 MCP 도구를 켰습니다.' : '모든 MCP 도구를 껐습니다.',
+                    text: 'MCP 클라이언트를 새로고침하면 반영됩니다.',
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 2000,
+                });
+            } catch (err) {
+                Swal.fire('오류', err.message, 'error');
+            } finally {
+                setMcpToolsSaving(false);
+            }
+        }
+
         async function deleteDirectMessage(id) {
             Swal.fire({
                 title: '쪽지 삭제',
@@ -1844,5 +2000,6 @@ window.markAllNotificationsReadArchive = markAllNotificationsReadArchive;
 window.deleteAllNotificationsArchive = deleteAllNotificationsArchive;
 window.generateMcpApiKey = generateMcpApiKey;
 window.deleteMcpApiKey = deleteMcpApiKey;
+window.setAllMcpTools = setAllMcpTools;
 window.copyWikiMcpEndpoint = copyWikiMcpEndpoint;
 window.copyMcpApiKeyJsonSnippet = copyMcpApiKeyJsonSnippet;

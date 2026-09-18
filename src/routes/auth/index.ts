@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { Env } from '../../types';
+import type { Env, User } from '../../types';
 import { requireAuth, requireAuthAllowBanned } from '../../middleware/session';
 import { getSuperAdmins, isSuperAdmin, PRIVATE_AVATAR_PATH } from '../../utils/auth';
 import type { OAuthProvider, OAuthProfile, OAuthStateData } from './providers/base';
@@ -16,6 +16,8 @@ import { signupPending } from '../../utils/webhook/events/signup';
 import { createNotification } from '../../utils/notification';
 import { sha256Hex } from '../../utils/oauth';
 import { ensureMcpInstantApplyMigration } from '../../utils/mcpInstantApplyMigration';
+import { ensureMcpDisabledToolsMigration, parseDisabledTools, serializeDisabledTools, MCP_DISABLED_TOOLS_MAX, MCP_TOOL_NAME_MAX_LENGTH } from '../../utils/mcpToolPrefs';
+import { getGroupedAvailableTools, getAllKnownMcpToolNames, getRoleScopeToolNames, getHiddenDisabledToolNames, expandToolNamesWithAliases } from '../mcp';
 
 const auth = new Hono<Env>();
 
@@ -499,6 +501,196 @@ auth.put('/api/me/mcp-instant-apply', requireAuth, async (c) => {
     }
 
     return c.json({ success: true, enabled: !!enabled });
+});
+
+/**
+ * GET /api/me/mcp-tools
+ * 자신의 권한에 제공된 MCP 도구 목록을 그룹·설명·On/Off 상태와 함께 반환 (마이페이지 표시용).
+ * - 기본 노출 범위(RBAC + RAG 환경 + mcp_instant_apply)에 속한 도구만 포함된다.
+ * - enabled=false(Off)인 도구는 MCP 핸드셰이크(tools/list·tools/call)에서 아예 없는 것처럼 취급된다.
+ * - 기본값은 모두 On (mcp_disabled_tools='[]').
+ */
+auth.get('/api/me/mcp-tools', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const loaded = await loadEffectiveMcpUser(c, user);
+    if ('error' in loaded) return loaded.error;
+    const eff = loaded.effectiveUser;
+    const tools = getGroupedAvailableTools(c.env, rbac, eff);
+    return c.json({ tools, hidden_disabled: getHiddenDisabledToolNames(c.env, rbac, eff) });
+});
+
+/**
+ * /api/me/mcp-tools 공용: 세션 KV 가 stale 할 수 있으므로 역할·설정을 DB 에서
+ * fresh 조회해 effective user 를 만든다 (승격/강등 후 TTL 동안 어긋남 방지).
+ * fresh 역할이 banned/deleted 면 에러 응답을 돌려준다.
+ */
+async function loadEffectiveMcpUser(c: Context<Env>, user: User): Promise<{ effectiveUser: User } | { error: Response }> {
+    const db = c.env.DB;
+    await ensureMcpDisabledToolsMigration(db);
+    await ensureMcpInstantApplyMigration(db);
+    const fresh = await db
+        .prepare('SELECT email, role, banned_until, mcp_instant_apply, mcp_disabled_tools FROM users WHERE id = ?')
+        .bind(user.id)
+        .first<{ email: string; role: string; banned_until: number | null; mcp_instant_apply: number | null; mcp_disabled_tools: string | null }>();
+    if (!fresh) return { error: c.json({ error: '사용자를 찾을 수 없습니다.' }, 404) };
+    const now = Math.floor(Date.now() / 1000);
+    // 세션 미들웨어와 동일한 유효 역할 판정 (super_admin 보정·ban 반영·만료 롤백).
+    let effectiveRole = fresh.role as User['role'];
+    if (isSuperAdmin(fresh.email, c.env)) effectiveRole = 'super_admin';
+    else if (fresh.banned_until && fresh.banned_until > now) effectiveRole = 'banned';
+    else if (fresh.role === 'banned') effectiveRole = 'user';
+    if (effectiveRole === 'deleted') return { error: c.json({ error: '탈퇴한 사용자입니다.' }, 403) };
+    if (effectiveRole === 'banned') return { error: c.json({ error: '차단된 계정입니다. 이용하실 수 없습니다.' }, 403) };
+    return {
+        effectiveUser: {
+            ...user,
+            role: effectiveRole,
+            mcp_instant_apply: fresh.mcp_instant_apply ?? 0,
+            mcp_disabled_tools: fresh.mcp_disabled_tools ?? '[]',
+        },
+    };
+}
+
+/** disabled_tools 배열 원본을 엄격 검증한다 (조용한 제거·잘라냄 없이 400). */
+function validateStrictToolNameArray(raw: unknown[]): { names: string[] } | { error: string } {
+    if (raw.length > MCP_DISABLED_TOOLS_MAX) {
+        return { error: `disabled_tools 는 최대 ${MCP_DISABLED_TOOLS_MAX}개까지 지정할 수 있습니다.` };
+    }
+    const out: string[] = [];
+    for (const item of raw) {
+        if (typeof item !== 'string' || !item.trim()) {
+            return { error: 'disabled_tools 배열은 비어 있지 않은 문자열만 포함해야 합니다.' };
+        }
+        const name = item.trim();
+        if (name.length > MCP_TOOL_NAME_MAX_LENGTH) {
+            return { error: `도구명이 너무 깁니다 (최대 ${MCP_TOOL_NAME_MAX_LENGTH}자): ${name.slice(0, 30)}` };
+        }
+        out.push(name);
+    }
+    return { names: out };
+}
+
+/**
+ * PUT /api/me/mcp-tools
+ * 사용자별 MCP 도구 On/Off 설정. 본인 설정만 변경한다.
+ * - 단건: { tool: "<도구명>", enabled: boolean } — 해당 도구만 켜거나 끈다.
+ * - 명시적 일괄: { disabled_tools: string[] } — Off 목록 전체를 교체한다.
+ * - 전체: { all: boolean } — 역할 범위 전체를 켜거나 끈다 (모두 켜기/끄기 버튼용).
+ * 세 형식은 상호 배타적이다 (조합 시 400). 이름 검증은 역할 범위(getRoleScopeToolNames)
+ * 기준이다 — 역할 밖 도구는 단건·일괄 모두 400 으로 거부한다. 별칭 묶음은 함께 적용된다.
+ * 모든 경로는 값-CAS(최대 3회 재시도)로 저장해 동시 변경 충돌을 409 로 알린다.
+ * 저장 시 역할 범위 밖 잔재(강등 후 남은 설정 등)는 정리된다. information 은 대상이 아니다.
+ */
+auth.put('/api/me/mcp-tools', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const db = c.env.DB;
+    const loaded = await loadEffectiveMcpUser(c, user);
+    if ('error' in loaded) return loaded.error;
+    const eff = loaded.effectiveUser;
+    const scope = new Set(getRoleScopeToolNames(rbac, eff));
+    const rejectOutOfScope = (name: string) => {
+        if (!getAllKnownMcpToolNames().includes(name)) return `알 수 없는 MCP 도구입니다: ${name}`;
+        return `내 권한에 제공되지 않는 MCP 도구입니다: ${name}`;
+    };
+
+    const body = await c.req.json<{ tool?: unknown; enabled?: unknown; disabled_tools?: unknown; all?: unknown }>()
+        .catch(() => ({} as { tool?: unknown; enabled?: unknown; disabled_tools?: unknown; all?: unknown }));
+    // 세 형식은 상호 배타적이다 — 조합된 모호한 요청은 400 으로 거부한다.
+    const hasAll = body.all !== undefined;
+    const hasSingle = body.tool !== undefined || body.enabled !== undefined;
+    const hasBulk = body.disabled_tools !== undefined;
+    if ([hasAll, hasSingle, hasBulk].filter(Boolean).length !== 1) {
+        return c.json({ error: '{ tool, enabled } / { disabled_tools } / { all } 중 정확히 하나의 형식으로 보내주세요.' }, 400);
+    }
+
+    // 세 경로 모두 (현재값) => 다음 Off 목록의 순수 계산으로 표현하고,
+    // 값-CAS(최대 3회 재시도)로 통일 저장한다.
+    let compute: (current: string[]) => string[];
+    if (hasAll) {
+        if (typeof body.all !== 'boolean') {
+            return c.json({ error: 'all 값은 boolean 이어야 합니다.' }, 400);
+        }
+        // 전체: true=모두 켜기([]), false=역할 범위 모두 끄기. DOM 스냅샷에 의존하지 않으므로
+        // 화면에 안 보이는 도구(즉시반영 OFF 시 apply_edit, RAG 비활성 시 search_rag)까지 커버한다.
+        const names = body.all ? [] : getRoleScopeToolNames(rbac, eff);
+        compute = () => names;
+    } else if (hasBulk) {
+        if (!Array.isArray(body.disabled_tools)) {
+            return c.json({ error: 'disabled_tools 값은 문자열 배열이어야 합니다.' }, 400);
+        }
+        const strict = validateStrictToolNameArray(body.disabled_tools);
+        if ('error' in strict) return c.json({ error: strict.error }, 400);
+        const expanded = expandToolNamesWithAliases(strict.names);
+        for (const name of expanded) {
+            if (!scope.has(name)) return c.json({ error: rejectOutOfScope(name) }, 400);
+        }
+        compute = () => expanded.filter(name => scope.has(name));
+    } else {
+        // 단건 토글 — 엄격 검증 (누락/문자열 오남용 방지).
+        if (typeof body.tool !== 'string' || !body.tool.trim()) {
+            return c.json({ error: 'tool 값은 비어 있지 않은 문자열이어야 합니다.' }, 400);
+        }
+        if (typeof body.enabled !== 'boolean') {
+            return c.json({ error: 'enabled 값은 boolean 이어야 합니다.' }, 400);
+        }
+        const rawName = body.tool.trim();
+        if (rawName.length > MCP_TOOL_NAME_MAX_LENGTH) {
+            return c.json({ error: `도구명이 너무 깁니다 (최대 ${MCP_TOOL_NAME_MAX_LENGTH}자).` }, 400);
+        }
+        const toolNames = expandToolNamesWithAliases([rawName]);
+        for (const name of toolNames) {
+            if (!scope.has(name)) return c.json({ error: rejectOutOfScope(name) }, 400);
+        }
+        const enabled = body.enabled;
+        compute = (current) => {
+            const set = new Set(current);
+            if (enabled) for (const name of toolNames) set.delete(name);
+            else for (const name of toolNames) set.add(name);
+            // 저장 시 역할 범위 밖 잔재(강등 후 남은 설정 등)는 함께 정리한다.
+            return [...set].filter(name => scope.has(name));
+        };
+    }
+
+    let finalRaw: string | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const row = await db
+            .prepare('SELECT mcp_disabled_tools FROM users WHERE id = ?')
+            .bind(user.id)
+            .first<{ mcp_disabled_tools: string | null }>();
+        if (!row) return c.json({ error: '사용자를 찾을 수 없습니다.' }, 404);
+        const rawBefore = row.mcp_disabled_tools ?? '[]';
+        const next = serializeDisabledTools(compute(parseDisabledTools(rawBefore)));
+        const upd = await db
+            .prepare('UPDATE users SET mcp_disabled_tools = ? WHERE id = ? AND COALESCE(mcp_disabled_tools, ?) = ?')
+            .bind(next, user.id, rawBefore, rawBefore)
+            .run();
+        if ((upd.meta.changes ?? 0) > 0) {
+            finalRaw = next;
+            break;
+        }
+    }
+    if (finalRaw === null) {
+        return c.json({ error: '동시 변경과 충돌했습니다. 다시 시도해주세요.' }, 409);
+    }
+
+    // 세션 KV 캐시 무효화 (변경된 mcp_disabled_tools 반영).
+    const sessionId = getCookie(c, 'wiki_session');
+    if (sessionId) {
+        await c.env.KV.delete(`session:${sessionId}`);
+    }
+
+    const reloaded = await loadEffectiveMcpUser(c, user);
+    if ('error' in reloaded) return reloaded.error;
+    const reEff = reloaded.effectiveUser;
+    const tools = getGroupedAvailableTools(c.env, rbac, reEff);
+    return c.json({
+        success: true,
+        disabled_tools: parseDisabledTools(reEff.mcp_disabled_tools),
+        hidden_disabled: getHiddenDisabledToolNames(c.env, rbac, reEff),
+        tools,
+    });
 });
 
 /**
