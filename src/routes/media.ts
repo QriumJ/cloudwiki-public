@@ -362,7 +362,7 @@ media.get('/api/media/doc/:filename', async (c) => {
  * GET /api/media/doc/:filename/backlinks
  * 이미지 문서를 사용(참조)하는 문서/블로그 포스트/토론·티켓 댓글 목록 조회.
  * page_links 테이블(link_type='image', target_slug=r2_key) 기반.
- * 비공개/삭제 문서는 관리자만 열람.
+ * 삭제 문서는 관리자만, 비공개 문서는 wiki:private 보유자만 열람.
  * 응답 항목 형식:
  *   - 위키 문서: { type: 'page', slug, updated_at, is_deleted }
  *   - 블로그 포스트: { type: 'blog', id, title, updated_at, is_deleted }
@@ -402,6 +402,11 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
     `;
     if (!isAdmin) {
         pageQuery += ' AND p.deleted_at IS NULL';
+    }
+    // 비공개 문서(p.is_private=1)의 slug가 이미지 파일명 열거를 통해 새어 나가지 않도록
+    // 토론 쿼리와 동일하게 wiki:private 권한이 없는 사용자에게 숨긴다.
+    if (!canSeePrivate) {
+        pageQuery += ' AND p.is_private = 0';
     }
     pageQuery += ' ORDER BY p.updated_at DESC LIMIT 100';
 

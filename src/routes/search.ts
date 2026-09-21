@@ -695,13 +695,19 @@ search.get('/search/suggest', async (c) => {
     // instr() 기반 부분/접두사 매치 — 긴 입력에서 D1 의 LIKE 50바이트 한도에 걸리지 않고,
     // 검색어에 포함된 `%`·`_` 가 와일드카드로 해석되지도 않는다 (sqlContains 주석 참고).
 
-    // 1. 카테고리 검색 (exclude_categories=1 이면 건너뛴다)
+    // 1. 카테고리 검색 (exclude_categories=1 이면 건너뛴다).
+    // page_categories를 pages와 join해 호출자가 볼 수 있는 문서(소프트 삭제 제외,
+    // 비공개는 wiki:private 보유자만)에 연결된 카테고리만 추천 — 비공개/삭제 문서에만
+    // 달린 카테고리명이 노출되지 않게 한다(카테고리: 검색 모드와 동일한 가시성).
+    // NOTE: sqlContains/sqlStartsWith는 바인드를 1개씩 소비하므로 bind는 (trimmed, trimmed) 유지.
+    const catVisibility = (isAdmin ? '' : ' AND p.deleted_at IS NULL') + (canSeePrivate ? '' : ' AND p.is_private = 0');
     const catResults = excludeCategories
         ? { results: [] as Record<string, unknown>[] }
         : await db.prepare(`
-            SELECT DISTINCT category FROM page_categories
-            WHERE ${sqlContains('category')}
-            ORDER BY CASE WHEN ${sqlStartsWith('category')} THEN 0 ELSE 1 END, length(category)
+            SELECT DISTINCT pc.category AS category FROM page_categories pc
+            JOIN pages p ON p.id = pc.page_id
+            WHERE ${sqlContains('pc.category')}${catVisibility}
+            ORDER BY CASE WHEN ${sqlStartsWith('pc.category')} THEN 0 ELSE 1 END, length(pc.category)
             LIMIT 7
         `).bind(trimmed, trimmed).all();
 

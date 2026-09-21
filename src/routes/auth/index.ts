@@ -882,6 +882,9 @@ auth.get('/api/users/:id/profile', async (c) => {
  * 특정 유저의 편집(리비전) 내역 반환 (페이징: offset/limit)
  */
 auth.get('/api/users/:id/contributions', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
     const userId = parseInt(c.req.param('id'));
     if (isNaN(userId)) {
         return c.json({ error: '유효하지 않은 사용자 ID입니다.' }, 400);
@@ -890,6 +893,13 @@ auth.get('/api/users/:id/contributions', async (c) => {
     const db = c.env.DB;
     const offset = parseInt(c.req.query('offset') || '0');
     const limit = Math.min(parseInt(c.req.query('limit') || '20'), 50);
+    const viewer = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    // 비공개 문서의 slug·summary가 기여내역을 통해 새어 나가지 않도록 본인 또는
+    // wiki:private 보유자에게만 비공개 행을 표시한다.
+    const canSeePrivate = rbac.can(viewer?.role ?? 'guest', 'wiki:private');
+    const isSelf = !!(viewer && viewer.id === userId);
+    const privateFilter = (canSeePrivate || isSelf) ? '' : ' AND p.is_private = 0';
 
     // 유저 존재 여부 확인
     const userExists = await db
@@ -905,17 +915,17 @@ auth.get('/api/users/:id/contributions', async (c) => {
                 p.slug
          FROM revisions r
          JOIN pages p ON r.page_id = p.id
-         WHERE r.author_id = ? AND p.deleted_at IS NULL
+         WHERE r.author_id = ? AND p.deleted_at IS NULL${privateFilter}
          ORDER BY r.created_at DESC
          LIMIT ? OFFSET ?`
     ).bind(userId, limit, offset).all();
 
-    // 다음 페이지 존재 여부 확인
+    // 다음 페이지 존재 여부 확인 (목록과 동일한 가시성 필터 적용)
     const countResult = await db.prepare(
         `SELECT COUNT(*) as total
          FROM revisions r
          JOIN pages p ON r.page_id = p.id
-         WHERE r.author_id = ? AND p.deleted_at IS NULL`
+         WHERE r.author_id = ? AND p.deleted_at IS NULL${privateFilter}`
     ).bind(userId).first<{ total: number }>();
 
     return c.json({
