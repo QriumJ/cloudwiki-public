@@ -148,10 +148,189 @@ function wireActions(editor: MemoEditor): void {
         });
     }
 
+    wireFileLoader(editor);
+
     // 초기 1회 반영 (복원된 본문 기준 카운터·프리뷰)
     const initial = editor.getText();
     updateCounterFromText(initial);
     void renderMemoPreview(initial);
+}
+
+// ── 텍스트 파일 불러오기 ──
+// 확장자/MIME 과 무관하게 내용물 바이트를 직접 검사해 일반 텍스트인지 판정한다.
+// localStorage 보관(브라우저별 ~5MB) 특성상 너무 큰 파일은 미리 거른다.
+const MEMO_FILE_MAX_BYTES = 2 * 1024 * 1024;
+
+// 허용 제어문자: \t \n \v \f \r, ESC(ANSI 로그). 그 외 C0 제어문자·DEL 은 바이너리 신호로 본다.
+function isAllowedControl(code: number): boolean {
+    return code === 0x09 || code === 0x0A || code === 0x0B || code === 0x0C || code === 0x0D || code === 0x1B;
+}
+
+/**
+ * 파일 바이트를 텍스트로 디코딩한다. 올바른 텍스트가 아니면 null.
+ *  - BOM 이 있으면 해당 인코딩(UTF-8 / UTF-16LE / UTF-16BE)으로 엄격 디코딩
+ *  - BOM 이 없으면 UTF-8 → EUC-KR(CP949) 순으로 엄격(fatal) 디코딩 시도
+ *  - 디코딩 결과에 NUL 이 있거나 비허용 제어문자 비율이 높으면 바이너리로 판정
+ */
+function decodeTextFile(buf: ArrayBuffer): string | null {
+    const bytes = new Uint8Array(buf);
+    let candidates: string[];
+    if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) candidates = ['utf-8'];
+    else if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) candidates = ['utf-16le'];
+    else if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) candidates = ['utf-16be'];
+    else {
+        // BOM 없는 파일의 NUL 바이트는 바이너리(또는 BOM 없는 UTF-16 — 미지원) 신호.
+        if (bytes.includes(0)) return null;
+        candidates = ['utf-8', 'euc-kr'];
+    }
+
+    let text: string | null = null;
+    for (const enc of candidates) {
+        try {
+            // TextDecoder 는 기본적으로 선행 BOM 을 제거한다.
+            text = new TextDecoder(enc, { fatal: true }).decode(bytes);
+            break;
+        } catch { /* 다음 인코딩 시도 (미지원 라벨 RangeError 포함) */ }
+    }
+    if (text === null) return null;
+
+    let bad = 0;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        if (c === 0) return null;
+        if ((c < 0x20 && !isAllowedControl(c)) || c === 0x7F) bad++;
+    }
+    // 드문 제어문자 몇 개는 허용하되, 1% 를 넘으면 바이너리로 본다.
+    if (bad > 0 && bad / text.length > 0.01) return null;
+    return text;
+}
+
+function wireFileLoader(editor: MemoEditor): void {
+    const btn = document.getElementById('memoLoadFileBtn');
+    if (!btn) return;
+
+    // 에디터 이미지 업로드 팝오버(cm-shared.ts buildImageUploadPopupButton)와 동일한 마크업/클래스를 재사용한다.
+    const popup = document.createElement('div');
+    popup.className = 'img-upload-popup';
+    popup.setAttribute('role', 'dialog');
+    popup.setAttribute('aria-label', '텍스트 파일 불러오기');
+    popup.innerHTML = `
+        <div class="img-upload-dropzone" tabindex="0" role="button">
+            <i class="mdi mdi-file-document-outline"></i>
+            <div class="drop-main-text">텍스트 파일을 여기에 드래그하세요</div>
+            <div class="drop-sub-text">또는 클릭하여 파일 선택 (최대 2MB)</div>
+        </div>
+    `;
+    document.body.appendChild(popup);
+    const dropzone = popup.querySelector('.img-upload-dropzone') as HTMLElement;
+
+    // 확장자 제한 없음 — 내용물로 판정한다.
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.style.display = 'none';
+    popup.appendChild(fileInput);
+
+    const closePopup = () => popup.classList.remove('active');
+
+    const positionPopup = () => {
+        const rect = btn.getBoundingClientRect();
+        const popupW = popup.offsetWidth;
+        const popupH = popup.offsetHeight;
+        const viewportW = document.documentElement.clientWidth;
+        const viewportH = document.documentElement.clientHeight;
+        const margin = 8;
+
+        let left = rect.left + (rect.width / 2) - (popupW / 2);
+        left = Math.max(margin, Math.min(left, viewportW - popupW - margin));
+
+        // 하단 버튼 영역이라 기본은 위쪽, 공간이 없으면 아래쪽에 띄운다.
+        let top = rect.top - popupH - 6;
+        if (top < margin && rect.bottom + 6 + popupH + margin <= viewportH) top = rect.bottom + 6;
+        top = Math.max(margin, Math.min(top, viewportH - popupH - margin));
+
+        popup.style.left = (left + window.scrollX) + 'px';
+        popup.style.top = (top + window.scrollY) + 'px';
+    };
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const opening = !popup.classList.contains('active');
+        popup.classList.toggle('active');
+        if (opening) positionPopup();
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target as Node) && !btn.contains(e.target as Node)) closePopup();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && popup.classList.contains('active')) closePopup();
+    });
+
+    const loadFile = async (file: File) => {
+        closePopup();
+        if (file.size > MEMO_FILE_MAX_BYTES) {
+            w.Swal?.fire('불러오기 실패', '파일이 너무 큽니다. 2MB 이하의 텍스트 파일만 불러올 수 있습니다.', 'warning');
+            return;
+        }
+        let text: string | null;
+        try {
+            text = decodeTextFile(await file.arrayBuffer());
+        } catch {
+            w.Swal?.fire('불러오기 실패', '파일을 읽지 못했습니다.', 'error');
+            return;
+        }
+        if (text === null) {
+            w.Swal?.fire('불러오기 실패', '올바른 텍스트 파일이 아닙니다. 일반 텍스트(UTF-8, UTF-16, EUC-KR) 파일만 불러올 수 있습니다.', 'warning');
+            return;
+        }
+
+        if (editor.getText()) {
+            let confirmed = false;
+            if (w.Swal) {
+                const result = await w.Swal.fire({
+                    icon: 'warning',
+                    title: '파일을 불러올까요?',
+                    text: '현재 작성 중인 내용을 덮어씁니다. 이 동작은 되돌릴 수 없습니다.',
+                    showCancelButton: true,
+                    confirmButtonText: '덮어쓰기',
+                    cancelButtonText: '취소',
+                });
+                confirmed = !!result.isConfirmed;
+            } else {
+                confirmed = window.confirm('현재 작성 중인 내용을 덮어씁니다. 계속할까요?');
+            }
+            if (!confirmed) return;
+        }
+
+        // CRLF/CR 개행을 LF 로 정규화 (CM6 와 textarea 결과를 일치시킨다)
+        text = text.replace(/\r\n?/g, '\n');
+        editor.setText(text);
+        updateCounterFromText(text);
+        void renderMemoPreview(text);
+        persistMemo(text);
+        editor.focus();
+    };
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+    });
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files?.[0];
+        fileInput.value = '';
+        if (file) void loadFile(file);
+    });
+
+    dropzone.addEventListener('dragenter', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer!.dropEffect = 'copy'; });
+    dropzone.addEventListener('dragleave', (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); });
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.remove('dragover');
+        const file = e.dataTransfer?.files?.[0];
+        if (file) void loadFile(file);
+    });
 }
 
 // ── getAllPalettesForEditor 심 ──
